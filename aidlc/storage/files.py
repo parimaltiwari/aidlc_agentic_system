@@ -169,7 +169,15 @@ class FileRunRepository:
 
     def get_run(self, run_id: str) -> dict | None:
         path = self._run_root(run_id) / "run.json"
-        return json.loads(path.read_text()) if path.exists() else None
+        if not path.exists():
+            return None
+        result = json.loads(path.read_text())
+        change_path = self._run_root(run_id) / "change_requests.jsonl"
+        if change_path.exists():
+            result["change_requests"] = [
+                json.loads(line) for line in change_path.read_text().splitlines() if line
+            ]
+        return result
 
     def latest_artifacts(self, run_id: str) -> dict[str, Any]:
         return ArtifactStore(run_id, root=str(self.root)).latest_all()

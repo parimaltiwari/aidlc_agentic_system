@@ -311,6 +311,24 @@ class PostgresRunRepository:
                     """,
                     (run_id,),
                 ).fetchone()
+            if row:
+                cr_rows = connection.execute(
+                    """
+                    SELECT cr_id, source_phase, target_phase, reason, details
+                    FROM change_requests WHERE run_id = %s ORDER BY id
+                    """,
+                    (run_id,),
+                ).fetchall()
+                row["change_requests"] = [
+                    {
+                        "id": cr[0],
+                        "source_phase": cr[1],
+                        "target_phase": cr[2],
+                        "reason": cr[3],
+                        "details": cr[4],
+                    }
+                    for cr in cr_rows
+                ]
         return dict(row) if row else None
 
     def latest_artifacts(self, run_id: str) -> dict[str, Any]:

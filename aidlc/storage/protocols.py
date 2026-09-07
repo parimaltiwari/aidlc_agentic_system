@@ -41,7 +41,9 @@ class RunRepository(Protocol):
 
     def update_status(self, run_id: str, status: str, phase: str) -> None: ...
 
-    def add_scorecard(self, run_id: str, phase: str, attempt: int, scorecard_dict: dict) -> None: ...
+    def add_scorecard(
+        self, run_id: str, phase: str, attempt: int, scorecard_dict: dict
+    ) -> None: ...
 
     def add_gate_decision(
         self,

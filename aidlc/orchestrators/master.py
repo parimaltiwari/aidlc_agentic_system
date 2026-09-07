@@ -213,7 +213,9 @@ def run_pipeline(
     checkpoint = graph.get_state(config)
     if any(task.interrupts for task in checkpoint.tasks):
         result["status"] = "awaiting_approval"
-    get_run_repository().update_status(run_id, result["status"], result.get("phase", "requirements"))
+    get_run_repository().update_status(
+        run_id, result["status"], result.get("phase", "requirements")
+    )
     return result
 
 
@@ -227,5 +229,7 @@ def resume_run(run_id: str, approved: bool, by: str) -> AidlcState:
     checkpoint = graph.get_state(config)
     if any(task.interrupts for task in checkpoint.tasks):
         result["status"] = "awaiting_approval"
-    get_run_repository().update_status(run_id, result["status"], result.get("phase", "requirements"))
+    get_run_repository().update_status(
+        run_id, result["status"], result.get("phase", "requirements")
+    )
     return result

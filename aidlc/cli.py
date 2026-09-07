@@ -3,6 +3,7 @@
 import os
 import json
 import time
+import asyncio
 from pathlib import Path
 
 import typer
@@ -25,10 +26,29 @@ def run(
     auto_approve: bool = typer.Option(False, "--auto-approve"),
     provider: str = typer.Option("mock"),
     verbose: bool = typer.Option(False, "--verbose"),
+    execution: str | None = typer.Option(None, "--execution"),
 ):
     os.environ["AIDLC_LLM_PROVIDER"] = provider
+    if execution:
+        os.environ["AIDLC_EXECUTION"] = execution
     if auto_approve:
         os.environ["AIDLC_AUTO_APPROVE"] = "1"
+    if os.getenv("AIDLC_EXECUTION") == "temporal":
+        from aidlc.distributed.client import start_run
+
+        context = {
+            "repo_path": repo,
+            "target_env": "simulation",
+            "risk_level": risk,
+            "budget_usd": 25.0,
+            "stakeholders": [],
+        }
+        run_id = asyncio.run(
+            start_run(intent, context, os.getenv("AIDLC_USER", "local"), auto_approve)
+        )
+        console.print(f"Run ID: {run_id}")
+        console.print("Status: running")
+        return
     started = time.perf_counter()
     result = run_pipeline(
         intent,
@@ -82,9 +102,29 @@ def approve(
     run_id: str,
     by: str = typer.Option(..., "--by"),
     reject: bool = typer.Option(False, "--reject"),
+    execution: str | None = typer.Option(None, "--execution"),
 ):
+    if execution:
+        os.environ["AIDLC_EXECUTION"] = execution
+    if os.getenv("AIDLC_EXECUTION") == "temporal":
+        from aidlc.distributed.client import approve as temporal_approve
+
+        asyncio.run(temporal_approve(run_id, not reject, by))
+        console.print(f"Run {run_id} approval signal sent")
+        return
     result = resume_run(run_id, not reject, by)
     console.print(f"Run {run_id} resumed: {result.get('status')}")
+
+
+@app.command()
+def worker(
+    address: str = typer.Option("localhost:7233", "--address"),
+    namespace: str = typer.Option("default", "--namespace"),
+    queues: str = typer.Option("aidlc-phases", "--queues"),
+):
+    from aidlc.distributed.worker import run_worker
+
+    asyncio.run(run_worker(address, namespace, [queue.strip() for queue in queues.split(",")]))
 
 
 @app.command()

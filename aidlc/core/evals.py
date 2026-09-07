@@ -85,7 +85,9 @@ class Evaluator(BaseAgent[EvalScorecard]):
                         break
                     judges.append(super().run(state))
             judge = max(judges, key=lambda result: result.overall)
-            judge_unavailable = not judge.scores or all(value == 0 for value in judge.scores.values())
+            judge_unavailable = not judge.scores or all(
+                value == 0 for value in judge.scores.values()
+            )
         except Exception as exc:
             judge = None
             judge_unavailable = True

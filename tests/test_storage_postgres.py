@@ -101,21 +101,36 @@ def test_postgres_tracer_and_repository_roundtrip():
     import psycopg
 
     with psycopg.connect(DATABASE_URL) as connection:
-        assert connection.execute(
-            "SELECT count(*) FROM agent_invocations WHERE run_id = %s", (run_id,)
-        ).fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT count(*) FROM scorecards WHERE run_id = %s", (run_id,)
-        ).fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT count(*) FROM gate_decisions WHERE run_id = %s", (run_id,)
-        ).fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT count(*) FROM change_requests WHERE run_id = %s", (run_id,)
-        ).fetchone()[0] == 1
-        assert connection.execute(
-            "SELECT count(*) FROM run_events WHERE run_id = %s", (run_id,)
-        ).fetchone()[0] == 1
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM agent_invocations WHERE run_id = %s", (run_id,)
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM scorecards WHERE run_id = %s", (run_id,)
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM gate_decisions WHERE run_id = %s", (run_id,)
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM change_requests WHERE run_id = %s", (run_id,)
+            ).fetchone()[0]
+            == 1
+        )
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM run_events WHERE run_id = %s", (run_id,)
+            ).fetchone()[0]
+            == 1
+        )
 
 
 def test_mock_pipeline_writes_postgres_history(monkeypatch):
@@ -134,12 +149,15 @@ def test_mock_pipeline_writes_postgres_history(monkeypatch):
 
     with psycopg.connect(DATABASE_URL) as connection:
         for table in ("runs", "artifact_versions", "scorecards", "gate_decisions"):
-            assert connection.execute(
-                f"SELECT count(*) FROM {table} WHERE run_id = %s"
-                if table != "runs"
-                else "SELECT count(*) FROM runs WHERE id = %s",
-                (run_id,),
-            ).fetchone()[0] > 0
+            assert (
+                connection.execute(
+                    f"SELECT count(*) FROM {table} WHERE run_id = %s"
+                    if table != "runs"
+                    else "SELECT count(*) FROM runs WHERE id = %s",
+                    (run_id,),
+                ).fetchone()[0]
+                > 0
+            )
 
 
 def test_postgres_approval_interrupt_and_resume(monkeypatch):
