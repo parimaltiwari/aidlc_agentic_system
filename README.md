@@ -22,6 +22,37 @@ Useful environment variables: `AIDLC_LLM_PROVIDER=mock|litellm`,
 `AIDLC_RUNS_DIR=./runs`. To use a real provider, set the appropriate LiteLLM
 credentials and run with `--provider litellm`.
 
+`AIDLC_MODEL` is used by fast agents and `AIDLC_MODEL_STRONG` by evaluators.
+`AIDLC_AUTO_APPROVE=1` bypasses review interruptions; without it, high-risk
+runs pause at each human gate. Checkpoints are stored in
+`$AIDLC_RUNS_DIR/checkpoints.sqlite`.
+
+## Approval
+
+Start a high-risk run without auto-approval:
+
+```bash
+uv run aidlc run "Add password reset" --risk high
+uv run aidlc approve RUN_ID --by parimal
+uv run aidlc approve RUN_ID --by parimal --reject
+```
+
+The API provides the same durable flow:
+
+```bash
+curl -X POST http://127.0.0.1:8000/runs/RUN_ID/approve \
+  -H 'content-type: application/json' \
+  -d '{"approved": true, "by": "parimal"}'
+```
+
+## Master routing
+
+After each phase gate, a block ends the run with `blocked`. A failed scorecard
+is retried up to two times, with evaluator feedback recorded in the run log.
+Test/evaluation triage can create a backward `ChangeRequest` to Design or
+Build, with at most two backward hops. Otherwise the next lifecycle phase is
+run; only an approved Deploy gate produces `completed`.
+
 ## Layout
 
 `core/` contains models, state, providers, gates, storage, and tracing;

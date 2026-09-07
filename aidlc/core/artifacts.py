@@ -75,6 +75,10 @@ class ADR(Artifact):
     alternatives: list[str]
 
 
+class ArchitectureDecisions(Artifact):
+    adrs: list[ADR]
+
+
 class Endpoint(Artifact):
     method: str
     path: str
@@ -160,6 +164,12 @@ class CodeDiff(Artifact):
     work_item_id: str
     changes: list[FileChange]
     commit_message: str
+
+
+class EnvReport(Artifact):
+    python_version: str
+    tools_available: list[str]
+    baseline_ok: bool
 
 
 class ToolResult(Artifact):

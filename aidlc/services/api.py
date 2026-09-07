@@ -5,31 +5,14 @@ import uuid
 from typing import Any
 
 from fastapi import FastAPI
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.types import Command
-
-from aidlc.orchestrators.master import build_master_graph
+from aidlc.orchestrators.master import resume_run, run_pipeline
 
 app = FastAPI(title="AIDLC API")
 _runs: dict[str, dict[str, Any]] = {}
-_graph = build_master_graph(MemorySaver())
 
 
 def _run(run_id: str, intent: str, context: dict):
-    initial = {
-        "run_id": run_id,
-        "intent": intent,
-        "context": context,
-        "phase": "requirements",
-        "artifacts": {},
-        "scorecards": [],
-        "gate_decisions": [],
-        "change_requests": [],
-        "retries": {},
-        "log": [],
-        "status": "running",
-    }
-    result = _graph.invoke(initial, config={"configurable": {"thread_id": run_id}})
+    result = run_pipeline(intent, context, run_id=run_id)
     _runs[run_id] = result
 
 
@@ -63,9 +46,6 @@ def get_artifact(run_id: str, name: str):
 
 @app.post("/runs/{run_id}/approve")
 def approve_run(run_id: str, payload: dict):
-    result = _graph.invoke(
-        Command(resume={"approved": payload["approved"], "by": payload["by"]}),
-        config={"configurable": {"thread_id": run_id}},
-    )
+    result = resume_run(run_id, payload["approved"], payload["by"])
     _runs[run_id] = result
     return {"run_id": run_id, "status": result.get("status")}

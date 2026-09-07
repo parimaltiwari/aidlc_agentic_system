@@ -19,21 +19,22 @@ def package_node(state: AidlcState):
     artifacts = state.get("artifacts", {})
     reqs = artifacts.get("requirements_spec", {}).get("requirements", [])
     work = artifacts.get("work_plan", {"items": []})
+    decisions = artifacts["architecture_decisions"]["adrs"]
     rows = [
         TraceRow(
             requirement_id=req["id"],
-            design_refs=["ADR-1"],
+            design_refs=[adr["id"] for adr in decisions],
             work_item_ids=[
                 item["id"] for item in work["items"] if req["id"] in item["requirement_ids"]
             ],
-            test_ids=["T-1", "T-2"],
+            test_ids=[],
         )
         for req in reqs
     ]
     package = DesignPackage(
         codebase_map=artifacts["codebase_map"],
-        adrs=[artifacts["a_d_r"]],
-        api_spec=artifacts["a_p_i_spec"],
+        adrs=decisions,
+        api_spec=artifacts["api_spec"],
         data_model=artifacts["data_model"],
         threat_model=artifacts["threat_model"],
         work_plan=work,
@@ -60,8 +61,10 @@ def build_design_graph():
     graph.add_edge(START, "codebase")
     graph.add_edge("codebase", "adr")
     graph.add_edge("adr", "api")
-    graph.add_edge("api", "data")
-    graph.add_edge("data", "threat")
+    graph.add_edge("adr", "data")
+    graph.add_edge("adr", "threat")
+    graph.add_edge("api", "work")
+    graph.add_edge("data", "work")
     graph.add_edge("threat", "work")
     graph.add_edge("work", "package")
     graph.add_edge("package", "evaluate")

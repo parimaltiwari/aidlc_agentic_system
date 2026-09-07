@@ -5,7 +5,10 @@ import os
 from collections.abc import Callable
 from typing import Protocol, TypeVar
 
+from litellm import completion
 from pydantic import BaseModel, ValidationError
+
+from aidlc.core.artifacts import EvalScorecard
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -26,7 +29,7 @@ class MockLLM:
         return decorator
 
     def structured(self, *, system: str, user: str, schema: type[T]) -> T:
-        if schema is __import__("aidlc.core.artifacts", fromlist=["EvalScorecard"]).EvalScorecard:
+        if schema is EvalScorecard:
             return schema.model_validate(
                 {
                     "phase": "mock",
@@ -47,8 +50,6 @@ class LiteLLMClient:
         self.model = model
 
     def structured(self, *, system: str, user: str, schema: type[T]) -> T:
-        from litellm import completion
-
         prompt = (
             system
             + "\nReturn JSON matching this schema:\n"

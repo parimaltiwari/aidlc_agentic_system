@@ -55,7 +55,6 @@ class BaseAgent(Generic[T], ABC):
             return {
                 "artifacts": {self.output_key: result.model_dump(mode="json")},
                 "log": [f"{self.phase}:{self.name} produced {self.output_key}"],
-                "phase": self.phase,
             }
 
         return node

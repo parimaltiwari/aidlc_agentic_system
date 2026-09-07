@@ -1,18 +1,27 @@
 from aidlc.core.agent import BaseAgent
-from aidlc.core.artifacts import ADR, APISpec, CodebaseMap, DataModel, ThreatModel, WorkPlan
+from aidlc.core.artifacts import (
+    APISpec,
+    ArchitectureDecisions,
+    CodebaseMap,
+    DataModel,
+    ThreatModel,
+    WorkPlan,
+)
 from aidlc.core.state import AidlcState
 from aidlc.agents import common  # noqa: F401
 
 
 class CodebaseAnalystAgent(BaseAgent[CodebaseMap]):
     name, phase, output_schema = "codebase-analyst", "design", CodebaseMap
+    system_prompt = "Map modules, languages, dependencies, and repository conventions."
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)
 
 
-class SolutionArchitectAgent(BaseAgent[ADR]):
-    name, phase, output_schema = "solution-architect", "design", ADR
+class SolutionArchitectAgent(BaseAgent[ArchitectureDecisions]):
+    name, phase, output_schema = "solution-architect", "design", ArchitectureDecisions
+    system_prompt = "Choose a maintainable architecture and record explicit ADR decisions."
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)
@@ -20,6 +29,11 @@ class SolutionArchitectAgent(BaseAgent[ADR]):
 
 class APIDataModelerAgent(BaseAgent[APISpec]):
     name, phase, output_schema = "api-data-modeler", "design", APISpec
+    system_prompt = "Define stable API endpoints and request/response schemas."
+
+    @property
+    def output_key(self):
+        return "api_spec"
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)
@@ -27,6 +41,7 @@ class APIDataModelerAgent(BaseAgent[APISpec]):
 
 class DataModelerAgent(BaseAgent[DataModel]):
     name, phase, output_schema = "data-modeler", "design", DataModel
+    system_prompt = "Define entities, fields, and relationships for the feature."
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)
@@ -34,6 +49,7 @@ class DataModelerAgent(BaseAgent[DataModel]):
 
 class ThreatModelAgent(BaseAgent[ThreatModel]):
     name, phase, output_schema = "threat-modeler", "design", ThreatModel
+    system_prompt = "Identify STRIDE threats and concrete mitigations."
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)
@@ -41,6 +57,7 @@ class ThreatModelAgent(BaseAgent[ThreatModel]):
 
 class TaskDecomposerAgent(BaseAgent[WorkPlan]):
     name, phase, output_schema = "task-decomposer", "design", WorkPlan
+    system_prompt = "Decompose requirements into ordered, independently mergeable work items."
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)

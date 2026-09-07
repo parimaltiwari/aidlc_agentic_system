@@ -6,6 +6,7 @@ from aidlc.agents import common  # noqa: F401
 
 class TestPlannerAgent(BaseAgent[TestPlan]):
     name, phase, output_schema = "test-planner", "test_eval", TestPlan
+    system_prompt = "Create a requirement-to-test matrix covering every requirement."
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)
@@ -13,6 +14,7 @@ class TestPlannerAgent(BaseAgent[TestPlan]):
 
 class IntegrationAPITestAgent(BaseAgent[TestResults]):
     name, phase, output_schema = "integration-api-test", "test_eval", TestResults
+    system_prompt = "Run deterministic integration and contract checks."
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)
@@ -20,18 +22,22 @@ class IntegrationAPITestAgent(BaseAgent[TestResults]):
 
 class E2ETestAgent(IntegrationAPITestAgent):
     name = "e2e-ui-test"
+    system_prompt = "Exercise end-to-end acceptance behavior deterministically."
 
 
 class PerformanceLoadAgent(IntegrationAPITestAgent):
     name = "performance-load"
+    system_prompt = "Assess performance behavior against available acceptance criteria."
 
 
 class SecurityTestAgent(IntegrationAPITestAgent):
     name = "security-test"
+    system_prompt = "Check security-sensitive behavior and authorization boundaries."
 
 
 class RegressionTriageAgent(BaseAgent[TriageReport]):
     name, phase, output_schema = "regression-triage", "test_eval", TriageReport
+    system_prompt = "Classify failures and route actionable change requests to design or build."
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)
@@ -39,6 +45,7 @@ class RegressionTriageAgent(BaseAgent[TriageReport]):
 
 class QualityAgent(BaseAgent[QualityReport]):
     name, phase, output_schema = "quality-agent", "test_eval", QualityReport
+    system_prompt = "Summarize quality evidence while deterministic checks decide go or no-go."
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)

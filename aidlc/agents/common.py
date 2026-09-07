@@ -4,6 +4,7 @@ import re
 
 from aidlc.core.artifacts import (
     ADR,
+    ArchitectureDecisions,
     APISpec,
     CodeDiff,
     CodebaseMap,
@@ -26,9 +27,9 @@ from aidlc.core.artifacts import (
     RollbackReport,
     ScopeAssessment,
     SoakReport,
+    TestCase,
     TestPlan,
     TestResult,
-    StaticReport,
     TestResults,
     Threat,
     ThreatModel,
@@ -42,15 +43,13 @@ from aidlc.core.llm import MockLLM
 
 
 def _work_id(user: str) -> str:
-    return (
-        (
-            re.search(r"WI-\d+", user)
-            or re.search(r"WI_\d+", user)
-            or type("M", (), {"group": lambda s, n: "WI-1"})()
-        )
-        .group(0)
-        .replace("_", "-")
-    )
+    match = re.search(r"WI[-_]\d+", user)
+    return match.group(0).replace("_", "-") if match else "WI-1"
+
+
+def _requirement_ids(user: str) -> list[str]:
+    ids = re.findall(r"REQ-\d+", user)
+    return list(dict.fromkeys(ids))
 
 
 @MockLLM.handler(IntakeSummary)
@@ -68,49 +67,24 @@ def clarification(_system: str, _user: str) -> ClarificationLog:
     return ClarificationLog(questions=[])
 
 
-@MockLLM.handler(StaticReport)
-def static_report(_system: str, _user: str) -> StaticReport:
-    return StaticReport(
-        tool_results=[
-            {
-                "tool": "mock-static-analysis",
-                "passed": True,
-                "output": "Deterministic mock analysis passed.",
-            }
-        ],
-        passed=True,
-    )
-
-
 @MockLLM.handler(RequirementsSpec)
 def requirements(_system: str, user: str) -> RequirementsSpec:
-    intent = user.split("Intent:", 1)[-1].split("\n", 1)[0].strip()
-    reqs = [
-        Requirement(
-            id="REQ-1",
-            kind="functional",
-            title="Core workflow",
-            description=intent,
-            acceptance_criteria=["Given a request, the service returns a successful response."],
-            priority="must",
-        ),
-        Requirement(
-            id="REQ-2",
-            kind="functional",
-            title="Validation",
-            description="Validate inputs safely.",
-            acceptance_criteria=["Invalid input produces a clear validation error."],
-            priority="must",
-        ),
-        Requirement(
-            id="REQ-3",
-            kind="non_functional",
-            title="Security and reliability",
-            description="Protect user data and provide reliable behavior.",
-            acceptance_criteria=["Sensitive data is not exposed and errors are handled."],
-            priority="should",
-        ),
-    ]
+    intent = user.split("Intent:", 1)[-1].split(";", 1)[0].split("\n", 1)[0].strip()
+    extra = min(2, len(re.findall(r"\band\b|,", intent, flags=re.IGNORECASE)))
+    words = [word.strip(".,") for word in intent.split() if word.strip(".,")]
+    reqs = []
+    for index in range(3 + extra):
+        keyword = words[index % len(words)] if words else "workflow"
+        reqs.append(
+            Requirement(
+                id=f"REQ-{index + 1}",
+                kind="functional" if index < 3 else "non_functional",
+                title=f"{keyword.title()} capability",
+                description=f"Support {keyword} as part of the requested intent.",
+                acceptance_criteria=[f"The {keyword} behavior is observable and testable."],
+                priority="must" if index < 3 else "should",
+            )
+        )
     return RequirementsSpec(
         title=intent[:80] or "AIDLC feature",
         problem_statement=intent,
@@ -153,6 +127,11 @@ def adr(_system: str, _user: str) -> ADR:
     )
 
 
+@MockLLM.handler(ArchitectureDecisions)
+def architecture_decisions(_system: str, _user: str) -> ArchitectureDecisions:
+    return ArchitectureDecisions(adrs=[adr("", "")])
+
+
 @MockLLM.handler(APISpec)
 def api(_system: str, _user: str) -> APISpec:
     return APISpec(
@@ -190,43 +169,32 @@ def threat(_system: str, _user: str) -> ThreatModel:
 
 
 @MockLLM.handler(WorkPlan)
-def workplan(_system: str, _user: str) -> WorkPlan:
-    return WorkPlan(
-        items=[
+def workplan(_system: str, user: str) -> WorkPlan:
+    req_ids = _requirement_ids(user) or ["REQ-1", "REQ-2", "REQ-3"]
+    items = []
+    for offset in range(0, len(req_ids), 2):
+        item_number = offset // 2 + 1
+        item_id = f"WI-{item_number}"
+        items.append(
             WorkItem(
-                id="WI-1",
-                title="Implement workflow",
-                description="Implement core workflow.",
-                requirement_ids=["REQ-1", "REQ-2"],
-                files_hint=["aidlc_generated/workflow.py"],
-                depends_on=[],
-                acceptance_criteria=["Core workflow works."],
-            ),
-            WorkItem(
-                id="WI-2",
-                title="Harden workflow",
-                description="Add security and reliability handling.",
-                requirement_ids=["REQ-3"],
-                files_hint=["aidlc_generated/hardening.py"],
-                depends_on=["WI-1"],
-                acceptance_criteria=["Errors are safe."],
-            ),
-        ]
-    )
+                id=item_id,
+                title=f"Implement {', '.join(req_ids[offset : offset + 2])}",
+                description="Implement the grouped requirements.",
+                requirement_ids=req_ids[offset : offset + 2],
+                files_hint=[f"aidlc_generated/{item_id.lower().replace('-', '_')}.py"],
+                depends_on=[f"WI-{item_number - 1}"] if item_number > 1 else [],
+                acceptance_criteria=["All assigned requirements are implemented."],
+            )
+        )
+    return WorkPlan(items=items)
 
 
 @MockLLM.handler(CodeDiff)
 def code_diff(_system: str, user: str) -> CodeDiff:
     wid = _work_id(user)
     slug = wid.lower().replace("-", "_")
-    return CodeDiff(
-        work_item_id=wid,
-        changes=[
-            FileChange(
-                path=f"aidlc_generated/{slug}.py",
-                action="create",
-                content=f'def {slug}() -> str:\n    """Generated implementation for {wid}."""\n    return "{wid} implemented"\n',
-            ),
+    if "write tests" in user.lower():
+        changes = [
             FileChange(
                 path=f"tests/test_{slug}.py",
                 action="create",
@@ -234,8 +202,22 @@ def code_diff(_system: str, user: str) -> CodeDiff:
                     f"from aidlc_generated.{slug} import {slug}\n\n\n"
                     f'def test_{slug}():\n    assert {slug}() == "{wid} implemented"\n'
                 ),
-            ),
-        ],
+            )
+        ]
+    else:
+        changes = [
+            FileChange(
+                path=f"aidlc_generated/{slug}.py",
+                action="create",
+                content=(
+                    f'def {slug}() -> str:\n    """Generated implementation for {wid}."""\n'
+                    f'    return "{wid} implemented"\n'
+                ),
+            )
+        ]
+    return CodeDiff(
+        work_item_id=wid,
+        changes=changes,
         commit_message=f"Implement {wid}",
     )
 
@@ -269,36 +251,30 @@ def pr(_system: str, _user: str) -> PullRequestArtifact:
 
 
 @MockLLM.handler(TestPlan)
-def test_plan(_system: str, _user: str) -> TestPlan:
+def test_plan(_system: str, user: str) -> TestPlan:
+    req_ids = _requirement_ids(user) or ["REQ-1", "REQ-2", "REQ-3"]
     return TestPlan(
         cases=[
-            {
-                "id": "T-1",
-                "requirement_ids": ["REQ-1"],
-                "kind": "unit",
-                "description": "Core workflow test",
-                "steps": ["Call workflow"],
-                "expected": "Success",
-            },
-            {
-                "id": "T-2",
-                "requirement_ids": ["REQ-2", "REQ-3"],
-                "kind": "integration",
-                "description": "Validation and security test",
-                "steps": ["Send invalid input"],
-                "expected": "Safe error",
-            },
+            TestCase(
+                id=f"T-{index}",
+                requirement_ids=[req_id],
+                kind="unit",
+                description=f"Verify {req_id}",
+                steps=[f"Exercise {req_id}"],
+                expected="Requirement behavior succeeds.",
+            )
+            for index, req_id in enumerate(req_ids, 1)
         ]
     )
 
 
 @MockLLM.handler(TestResults)
-def test_results(_system: str, _user: str) -> TestResults:
+def test_results(_system: str, user: str) -> TestResults:
+    test_ids = list(dict.fromkeys(re.findall(r"T-\d+", user))) or ["T-1"]
     return TestResults(
         kind="integration",
         results=[
-            TestResult(test_id="T-1", passed=True, details="mock pass"),
-            TestResult(test_id="T-2", passed=True, details="mock pass"),
+            TestResult(test_id=test_id, passed=True, details="mock pass") for test_id in test_ids
         ],
     )
 

@@ -47,6 +47,10 @@ def gate_node(phase: str):
             EvalScorecard.model_validate(scorecard), context.get("risk_level", "low"), retries
         )
         updates: dict = {"gate_decisions": [decision.model_dump(mode="json")], "phase": phase}
+        if not decision.approved and not decision.decision == "block" and not scorecard["passed"]:
+            updates["status"] = "running"
+            updates["gate_decisions"] = [decision.model_dump(mode="json")]
+            return updates
         if decision.decision == "review" and os.getenv("AIDLC_AUTO_APPROVE") != "1":
             answer = interrupt({"phase": phase, "reason": decision.reason})
             decision.approved = bool(answer.get("approved"))
@@ -54,8 +58,12 @@ def gate_node(phase: str):
             decision.decision = "auto" if decision.approved else "block"
         updates["status"] = (
             "completed"
-            if decision.approved
-            else ("blocked" if decision.decision == "block" else "awaiting_approval")
+            if phase == "deploy" and decision.approved
+            else (
+                "running"
+                if decision.approved
+                else ("blocked" if decision.decision == "block" else "awaiting_approval")
+            )
         )
         updates["gate_decisions"] = [decision.model_dump(mode="json")]
         return updates

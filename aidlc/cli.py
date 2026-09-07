@@ -4,11 +4,12 @@ import os
 from pathlib import Path
 
 import typer
+import uvicorn
 from rich.console import Console
 from rich.table import Table
 
 from aidlc.core.store import ArtifactStore
-from aidlc.orchestrators.master import run_pipeline
+from aidlc.orchestrators.master import resume_run, run_pipeline
 
 app = typer.Typer(help="AIDLC multi-agent development lifecycle")
 console = Console()
@@ -62,12 +63,15 @@ def show(run_id: str):
 
 
 @app.command()
-def approve(run_id: str, by: str):
-    console.print(f"Approval for {run_id} by {by} requires an active API/checkpointer session.")
+def approve(
+    run_id: str,
+    by: str = typer.Option(..., "--by"),
+    reject: bool = typer.Option(False, "--reject"),
+):
+    result = resume_run(run_id, not reject, by)
+    console.print(f"Run {run_id} resumed: {result.get('status')}")
 
 
 @app.command()
 def serve():
-    import uvicorn
-
     uvicorn.run("aidlc.services.api:app", host="127.0.0.1", port=8000)

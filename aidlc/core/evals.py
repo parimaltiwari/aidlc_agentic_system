@@ -5,6 +5,7 @@ from statistics import mean
 from aidlc.core.agent import BaseAgent
 from aidlc.core.artifacts import EvalScorecard
 from aidlc.core.state import AidlcState
+from aidlc.core.store import ArtifactStore
 
 
 class Evaluator(BaseAgent[EvalScorecard]):
@@ -22,14 +23,11 @@ class Evaluator(BaseAgent[EvalScorecard]):
     def as_node(self):
         def node(state: AidlcState) -> dict:
             result = self.run(state)
-            from aidlc.core.store import ArtifactStore
-
             ArtifactStore(state.get("run_id", "local")).save(self.output_key, result)
             return {
                 "artifacts": {self.output_key: result.model_dump(mode="json")},
                 "scorecards": [result.model_dump(mode="json")],
                 "log": [f"{self.phase}:{self.name} produced scorecard"],
-                "phase": self.phase,
             }
 
         return node
@@ -55,17 +53,26 @@ class Evaluator(BaseAgent[EvalScorecard]):
 class RequirementsEvaluator(Evaluator):
     name = "requirements-evaluator"
     phase = "requirements"
+    system_prompt = "Evaluate requirements for completeness, testability, and compliance."
 
     def deterministic_checks(self, state: AidlcState) -> dict[str, float]:
         reqs = state.get("artifacts", {}).get("requirements_spec", {}).get("requirements", [])
         valid = bool(reqs) and len({r["id"] for r in reqs}) == len(reqs)
         criteria = all(r.get("acceptance_criteria") for r in reqs) if reqs else False
-        return {"completeness": float(valid), "testability": float(criteria)}
+        compliance = (
+            not state.get("artifacts", {}).get("compliance_notes", {}).get("blocking", True)
+        )
+        return {
+            "completeness": float(valid),
+            "testability": float(criteria),
+            "compliance": float(compliance),
+        }
 
 
 class DesignEvaluator(Evaluator):
     name = "design-evaluator"
     phase = "design"
+    system_prompt = "Evaluate design traceability and work-plan dependency integrity."
 
     def deterministic_checks(self, state: AidlcState) -> dict[str, float]:
         reqs = {
@@ -93,6 +100,7 @@ class DesignEvaluator(Evaluator):
 class BuildEvaluator(Evaluator):
     name = "build-evaluator"
     phase = "build"
+    system_prompt = "Evaluate implementation, reviews, static analysis, and tests."
 
     def deterministic_checks(self, state: AidlcState) -> dict[str, float]:
         artifacts = state.get("artifacts", {})
@@ -104,25 +112,35 @@ class BuildEvaluator(Evaluator):
             )
             for i in plan
         )
-        return {"implementation": float(ok), "review": float(ok)}
+        static_ok = artifacts.get("static_report", {}).get("passed", False)
+        return {"implementation": float(ok), "review": float(ok), "static": float(static_ok)}
 
 
 class TestEvalEvaluator(Evaluator):
     name = "test-eval-evaluator"
     phase = "test_eval"
+    system_prompt = "Evaluate requirement coverage and deterministic test outcomes."
 
     def deterministic_checks(self, state: AidlcState) -> dict[str, float]:
-        quality = state.get("artifacts", {}).get("quality_report", {})
-        coverage = quality.get("coverage_by_requirement", {})
+        artifacts = state.get("artifacts", {})
+        requirements = {
+            item["id"] for item in artifacts.get("requirements_spec", {}).get("requirements", [])
+        }
+        cases = artifacts.get("test_plan", {}).get("cases", [])
+        covered = {req_id for case in cases for req_id in case.get("requirement_ids", [])}
+        result_items = artifacts.get("test_results", {}).get("results", [])
+        all_passed = bool(result_items) and all(item.get("passed", False) for item in result_items)
+        coverage = {req_id: req_id in covered for req_id in requirements}
         return {
-            "quality": float(quality.get("go", False)),
-            "coverage": float(bool(coverage) and all(coverage.values())),
+            "quality": float(bool(coverage) and all(coverage.values()) and all_passed),
+            "coverage": float(bool(requirements) and requirements <= covered and all_passed),
         }
 
 
 class DeployEvaluator(Evaluator):
     name = "deploy-evaluator"
     phase = "deploy"
+    system_prompt = "Evaluate deployment health and soak evidence."
 
     def deterministic_checks(self, state: AidlcState) -> dict[str, float]:
         artifacts = state.get("artifacts", {})
