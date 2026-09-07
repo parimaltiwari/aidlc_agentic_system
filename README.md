@@ -99,11 +99,13 @@ docker compose -f deploy/docker-compose.yml down -v
 
 ## Model serving
 
-For local open-source inference, see
-[`docs/DESIGN.md`](docs/DESIGN.md) and the Ollama section in the design
-documentation. The implementation supports LiteLLM-hosted models and Ollama
-through `aidlc/core/llm.py`; the distributed build guide records the planned
-vLLM/TGI serving decisions and the measured CPU-only Ollama limitations.
+Agents call models through `aidlc/core/llm.py` (`mock`, `litellm`, or `ollama`).
+For a laptop, see the Ollama section of [`docs/DESIGN.md`](docs/DESIGN.md)
+(CPU-only inference is slow — tens of seconds per call). For an enterprise,
+point `AIDLC_LLM_PROVIDER=litellm` at a LiteLLM proxy fronting vLLM/TGI-hosted
+open-source models; the serving fleet, model catalogue, and per-agent model
+assignment matrix are in
+[`docs/DISTRIBUTED_DESIGN.md`](docs/DISTRIBUTED_DESIGN.md) §14–§15 (slice 7).
 
 ## Documentation
 
