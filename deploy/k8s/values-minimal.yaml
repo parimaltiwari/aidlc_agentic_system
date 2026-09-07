@@ -1,0 +1,74 @@
+nameOverride: aidlc
+
+api:
+  replicaCount: 1
+  image:
+    repository: ghcr.io/parimaltiwari/aidlc
+    tag: latest
+
+workerPhases:
+  replicaCount: 1
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 2
+
+workerBuild:
+  replicaCount: 1
+
+vllm:
+  tiers:
+    - name: fast
+      enabled: true
+      replicas: 1
+      model: Qwen/Qwen2.5-7B-Instruct
+      tensorParallelSize: 1
+      quantization: ""
+      gpu: 1
+      port: 8000
+      nodeSelector: {}
+      tolerations: []
+      resources:
+        requests:
+          cpu: "2"
+          memory: 8Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "4"
+          memory: 16Gi
+          nvidia.com/gpu: "1"
+      cache:
+        enabled: true
+        size: 100Gi
+        storageClassName: ""
+    - name: coder
+      enabled: true
+      replicas: 1
+      model: Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+      tensorParallelSize: 1
+      quantization: awq
+      gpu: 1
+      port: 8000
+      nodeSelector: {}
+      tolerations: []
+      resources:
+        requests:
+          cpu: "4"
+          memory: 24Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: 32Gi
+          nvidia.com/gpu: "1"
+      cache:
+        enabled: true
+        size: 200Gi
+        storageClassName: ""
+
+litellm:
+  config:
+    fastModel: Qwen/Qwen2.5-7B-Instruct
+    strongModel: Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+    coderModel: Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+
+secrets:
+  databaseURL: postgresql://aidlc:aidlc@postgres-rw.database.svc:5432/aidlc

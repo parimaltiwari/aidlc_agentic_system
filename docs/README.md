@@ -16,7 +16,13 @@ mock/file/in-process path.
    decisions.
 4. [`BUILD_GUIDE.md`](BUILD_GUIDE.md) — development-team operating guide,
    exact interfaces, verified local stack recipe, and acceptance criteria.
-5. [`PLAN.md`](PLAN.md) — the original historical architecture/build plan.
+5. [`OPERATIONS.md`](OPERATIONS.md) — cluster topology, install/upgrade,
+   scaling, backup, observability, and incident runbooks.
+6. [`SECURITY.md`](SECURITY.md) — identity, authorization, secrets, tenancy,
+   sandbox, supply-chain, and audit decisions.
+7. [`DEPLOY_DESIGN.md`](DEPLOY_DESIGN.md) — real Deploy target abstraction,
+   promotion workflow, rollback, and kind-based acceptance plan.
+8. [`PLAN.md`](PLAN.md) — the original historical architecture/build plan.
 
 ## Status
 
@@ -27,8 +33,8 @@ mock/file/in-process path.
 | 3. Temporal phase execution | **Implemented** | [`aidlc/distributed`](../aidlc/distributed), [`tests/test_temporal.py`](../tests/test_temporal.py), [`deploy/docker-compose.yml`](../deploy/docker-compose.yml) | Phase activities, Signals, approval waits, retries, triage routing, and status queries work. |
 | 4. Distributed build swarm | Planned | [`aidlc/orchestrators/build.py`](../aidlc/orchestrators/build.py), future `aidlc-build` activities | Parallel per-work-item activities, portable sandboxes, and budget guards. |
 | 5. Project memory | Planned | Future project-memory storage and agent inputs | Relational project memory first; pgvector remains deferred. |
-| 6. Team operations and observability | Planned | [`aidlc/services/api.py`](../aidlc/services/api.py), future OTel/list commands | OTel, run listing, API keys, and two-machine operation. |
-| 7. Model routing and serving | Planned | [`aidlc/core/llm.py`](../aidlc/core/llm.py), future proxy/infra examples | Coder/reasoning tiers, per-agent overrides, aliases/fallbacks, and serving deployment. |
+| 6. Team operations and observability | Planned | [`aidlc/services/api.py`](../aidlc/services/api.py), [`OPERATIONS.md`](OPERATIONS.md), [`SECURITY.md`](SECURITY.md) | OTel, run listing, API keys, and two-machine operation. |
+| 7. Model routing and serving | Planned | [`aidlc/core/llm.py`](../aidlc/core/llm.py), [`deploy/k8s`](../deploy/k8s), future proxy/infra examples | Coder/reasoning tiers, per-agent overrides, aliases/fallbacks, and serving deployment. |
 
 The status table is deliberately separate from the historical plan: slices 1–3
 are present in this checkout, while slices 4–7 are design targets.

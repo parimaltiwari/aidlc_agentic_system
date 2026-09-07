@@ -281,6 +281,10 @@ tests use the in-process time-skipping environment and the mock provider.
   approval endpoints.
 - Two machines can run separate workers against the Compose stack and complete
   one end-to-end mock run.
+- The cluster topology, scaling signals, backup/retention, and incident
+  runbooks meet [`OPERATIONS.md`](OPERATIONS.md).
+- Bearer-key identity, project-scoped roles, secret handling, sandbox controls,
+  and the STRIDE-lite checklist meet [`SECURITY.md`](SECURITY.md).
 
 ### Slice 7 — model routing and serving
 

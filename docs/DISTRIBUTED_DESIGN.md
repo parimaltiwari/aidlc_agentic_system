@@ -457,6 +457,9 @@ keeps today's in-process LangGraph path for unit tests.
 
 ## 13. Security and tenancy
 
+The settled controls and implementation checklist are maintained in
+[`docs/SECURITY.md`](SECURITY.md).
+
 - Workers hold LLM and repo credentials; the API/CLI hold only Temporal client
   certs. Deployment credentials only on the `aidlc-deploy` queue.
 - Row-level tenancy by `org_id` on `projects`; API enforces project membership

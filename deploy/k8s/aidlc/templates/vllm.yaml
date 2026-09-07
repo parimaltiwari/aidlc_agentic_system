@@ -1,0 +1,112 @@
+{{- $root := . }}
+{{- range $tier := .Values.vllm.tiers }}
+{{- if $tier.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aidlc.fullname" $root }}-vllm-{{ $tier.name }}
+  labels:
+    {{- include "aidlc.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: vllm
+    aidlc.io/tier: {{ $tier.name }}
+spec:
+  replicas: {{ $tier.replicas }}
+  selector:
+    matchLabels:
+      {{- include "aidlc.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: vllm
+      aidlc.io/tier: {{ $tier.name }}
+  template:
+    metadata:
+      labels:
+        {{- include "aidlc.selectorLabels" $root | nindent 8 }}
+        app.kubernetes.io/component: vllm
+        aidlc.io/tier: {{ $tier.name }}
+    spec:
+      serviceAccountName: {{ include "aidlc.fullname" $root }}-vllm-{{ $tier.name }}
+      nodeSelector:
+        {{- toYaml $tier.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml $tier.tolerations | nindent 8 }}
+      containers:
+        - name: vllm
+          image: vllm/vllm-openai:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --model
+            - {{ $tier.model | quote }}
+            - --host
+            - 0.0.0.0
+            - --port
+            - {{ $tier.port | quote }}
+            - --tensor-parallel-size
+            - {{ $tier.tensorParallelSize | quote }}
+            {{- if $tier.quantization }}
+            - --quantization
+            - {{ $tier.quantization | quote }}
+            {{- end }}
+          env:
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aidlc.secretName" $root }}
+                  key: HF_TOKEN
+                  optional: true
+          ports:
+            - name: http
+              containerPort: {{ $tier.port }}
+              protocol: TCP
+          resources:
+            {{- toYaml $tier.resources | nindent 12 }}
+          {{- if $tier.cache.enabled }}
+          volumeMounts:
+            - name: model-cache
+              mountPath: /root/.cache/huggingface
+          {{- end }}
+      {{- if $tier.cache.enabled }}
+      volumes:
+        - name: model-cache
+          persistentVolumeClaim:
+            claimName: {{ include "aidlc.fullname" $root }}-vllm-{{ $tier.name }}-cache
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aidlc.fullname" $root }}-vllm-{{ $tier.name }}
+  labels:
+    {{- include "aidlc.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: vllm
+    aidlc.io/tier: {{ $tier.name }}
+spec:
+  selector:
+    {{- include "aidlc.selectorLabels" $root | nindent 4 }}
+    app.kubernetes.io/component: vllm
+    aidlc.io/tier: {{ $tier.name }}
+  ports:
+    - name: http
+      port: {{ $tier.port }}
+      targetPort: http
+      protocol: TCP
+{{- if $tier.cache.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "aidlc.fullname" $root }}-vllm-{{ $tier.name }}-cache
+  labels:
+    {{- include "aidlc.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: vllm
+    aidlc.io/tier: {{ $tier.name }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ $tier.cache.size }}
+  {{- if $tier.cache.storageClassName }}
+  storageClassName: {{ $tier.cache.storageClassName | quote }}
+  {{- end }}
+{{- end }}
+---
+{{- end }}
+{{- end }}

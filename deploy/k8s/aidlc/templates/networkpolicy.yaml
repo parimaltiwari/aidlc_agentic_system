@@ -1,0 +1,102 @@
+{{- if .Values.networkPolicy.enabled }}
+{{- $root := . }}
+{{- range $component := list "api" "worker-phases" "worker-build" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aidlc.fullname" $root }}-{{ $component }}-egress
+  labels:
+    {{- include "aidlc.labels" $root | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aidlc.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: {{ $component }}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $root.Values.external.postgres.namespace }}
+      ports:
+        - protocol: TCP
+          port: {{ $root.Values.external.postgres.port }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ $root.Values.external.temporal.namespace }}
+      ports:
+        - protocol: TCP
+          port: {{ $root.Values.external.temporal.port }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "aidlc.selectorLabels" $root | nindent 14 }}
+              app.kubernetes.io/component: litellm
+      ports:
+        - protocol: TCP
+          port: {{ $root.Values.litellm.service.port }}
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aidlc.fullname" . }}-litellm-egress
+  labels:
+    {{- include "aidlc.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aidlc.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: litellm
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "aidlc.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: vllm
+      ports:
+        - protocol: TCP
+          port: 8000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+---
+{{- range $tier := .Values.vllm.tiers }}
+{{- if $tier.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "aidlc.fullname" $root }}-vllm-{{ $tier.name }}-egress
+  labels:
+    {{- include "aidlc.labels" $root | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "aidlc.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: vllm
+      aidlc.io/tier: {{ $tier.name }}
+  policyTypes: ["Egress"]
+  egress: []
+---
+{{- end }}
+{{- end }}
+{{- end }}

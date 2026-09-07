@@ -1,0 +1,39 @@
+{{- if .Values.pdb.enabled }}
+{{- $root := . }}
+{{- range $component := list "api" "worker-phases" "worker-build" "litellm" }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aidlc.fullname" $root }}-{{ $component }}
+  labels:
+    {{- include "aidlc.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $component }}
+spec:
+  minAvailable: {{ $root.Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "aidlc.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: {{ $component }}
+---
+{{- end }}
+{{- range $tier := $root.Values.vllm.tiers }}
+{{- if $tier.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "aidlc.fullname" $root }}-vllm-{{ $tier.name }}
+  labels:
+    {{- include "aidlc.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: vllm
+    aidlc.io/tier: {{ $tier.name }}
+spec:
+  minAvailable: {{ $root.Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "aidlc.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: vllm
+      aidlc.io/tier: {{ $tier.name }}
+---
+{{- end }}
+{{- end }}
+{{- end }}

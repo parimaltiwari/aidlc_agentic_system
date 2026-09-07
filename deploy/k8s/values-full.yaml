@@ -1,0 +1,119 @@
+nameOverride: aidlc
+
+vllm:
+  tiers:
+    - name: fast
+      enabled: true
+      replicas: 1
+      model: Qwen/Qwen2.5-7B-Instruct
+      tensorParallelSize: 1
+      quantization: ""
+      gpu: 1
+      port: 8000
+      nodeSelector: {}
+      tolerations: []
+      resources:
+        requests:
+          cpu: "2"
+          memory: 8Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "4"
+          memory: 16Gi
+          nvidia.com/gpu: "1"
+      cache:
+        enabled: true
+        size: 100Gi
+        storageClassName: ""
+    - name: strong
+      enabled: true
+      replicas: 1
+      model: Qwen/Qwen2.5-32B-Instruct
+      tensorParallelSize: 2
+      quantization: awq
+      gpu: 2
+      port: 8000
+      nodeSelector: {}
+      tolerations: []
+      resources:
+        requests:
+          cpu: "4"
+          memory: 32Gi
+          nvidia.com/gpu: "2"
+        limits:
+          cpu: "8"
+          memory: 64Gi
+          nvidia.com/gpu: "2"
+      cache:
+        enabled: true
+        size: 200Gi
+        storageClassName: ""
+    - name: coder
+      enabled: true
+      replicas: 1
+      model: Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+      tensorParallelSize: 1
+      quantization: awq
+      gpu: 1
+      port: 8000
+      nodeSelector: {}
+      tolerations: []
+      resources:
+        requests:
+          cpu: "4"
+          memory: 24Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: 32Gi
+          nvidia.com/gpu: "1"
+      cache:
+        enabled: true
+        size: 200Gi
+        storageClassName: ""
+    - name: reasoning
+      enabled: true
+      replicas: 1
+      model: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+      tensorParallelSize: 2
+      quantization: awq
+      gpu: 2
+      port: 8000
+      nodeSelector: {}
+      tolerations: []
+      resources:
+        requests:
+          cpu: "4"
+          memory: 32Gi
+          nvidia.com/gpu: "2"
+        limits:
+          cpu: "8"
+          memory: 64Gi
+          nvidia.com/gpu: "2"
+      cache:
+        enabled: true
+        size: 200Gi
+        storageClassName: ""
+    - name: embed
+      enabled: true
+      replicas: 1
+      model: BAAI/bge-m3
+      tensorParallelSize: 1
+      quantization: ""
+      gpu: 1
+      port: 8000
+      nodeSelector: {}
+      tolerations: []
+      resources:
+        requests:
+          cpu: "2"
+          memory: 8Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "4"
+          memory: 16Gi
+          nvidia.com/gpu: "1"
+      cache:
+        enabled: true
+        size: 100Gi
+        storageClassName: ""

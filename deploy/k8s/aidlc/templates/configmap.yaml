@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aidlc.fullname" . }}-config
+  labels:
+    {{- include "aidlc.labels" . | nindent 4 }}
+data:
+  AIDLC_EXECUTION: {{ .Values.config.execution | quote }}
+  AIDLC_TEMPORAL_ADDRESS: {{ .Values.config.temporalAddress | quote }}
+  AIDLC_TEMPORAL_NAMESPACE: {{ .Values.config.temporalNamespace | quote }}
+  AIDLC_LLM_PROVIDER: {{ .Values.config.llmProvider | quote }}
+  AIDLC_MODEL: {{ .Values.config.model | quote }}
+  AIDLC_MODEL_STRONG: {{ .Values.config.modelStrong | quote }}
+  AIDLC_RUNS_DIR: {{ .Values.config.runsDir | quote }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "aidlc.fullname" . }}-litellm
+  labels:
+    {{- include "aidlc.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    model_list:
+      - model_name: aidlc-fast
+        litellm_params:
+          model: openai/{{ .Values.litellm.config.fastModel }}
+          api_base: http://{{ include "aidlc.fullname" . }}-vllm-fast:8000/v1
+          api_key: os.environ/OPENAI_API_KEY
+      - model_name: aidlc-strong
+        litellm_params:
+          model: openai/{{ .Values.litellm.config.strongModel }}
+          api_base: http://{{ include "aidlc.fullname" . }}-vllm-strong:8000/v1
+          api_key: os.environ/OPENAI_API_KEY
+      - model_name: aidlc-coder
+        litellm_params:
+          model: openai/{{ .Values.litellm.config.coderModel }}
+          api_base: http://{{ include "aidlc.fullname" . }}-vllm-coder:8000/v1
+          api_key: os.environ/OPENAI_API_KEY
+      - model_name: aidlc-reasoning
+        litellm_params:
+          model: openai/{{ .Values.litellm.config.reasoningModel }}
+          api_base: http://{{ include "aidlc.fullname" . }}-vllm-reasoning:8000/v1
+          api_key: os.environ/OPENAI_API_KEY
+      - model_name: aidlc-embed
+        litellm_params:
+          model: openai/{{ .Values.litellm.config.embedModel }}
+          api_base: http://{{ include "aidlc.fullname" . }}-vllm-embed:8000/v1
+          api_key: os.environ/OPENAI_API_KEY
+    router_settings:
+      routing_strategy: simple-shuffle
+      fallbacks:
+        - aidlc-fast:
+            - aidlc-strong
+        - aidlc-strong:
+            - aidlc-coder
+        - aidlc-coder:
+            - aidlc-reasoning
+        - aidlc-reasoning:
+            - aidlc-fast
+    litellm_settings:
+      drop_params: true
+      set_verbose: false

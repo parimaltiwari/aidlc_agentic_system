@@ -1,0 +1,91 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aidlc.fullname" . }}-worker-phases
+  labels:
+    {{- include "aidlc.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker-phases
+spec:
+  replicas: {{ .Values.workerPhases.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aidlc.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker-phases
+  template:
+    metadata:
+      labels:
+        {{- include "aidlc.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker-phases
+    spec:
+      serviceAccountName: {{ include "aidlc.fullname" . }}-worker-phases
+      containers:
+        - name: worker-phases
+          image: "{{ .Values.workerPhases.image.repository }}:{{ .Values.workerPhases.image.tag }}"
+          imagePullPolicy: {{ .Values.workerPhases.image.pullPolicy }}
+          {{- with .Values.workerPhases.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args:
+            {{- toYaml .Values.workerPhases.args | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "aidlc.fullname" . }}-config
+          env:
+            - name: AIDLC_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aidlc.secretName" . }}
+                  key: AIDLC_DATABASE_URL
+          resources:
+            {{- toYaml .Values.workerPhases.resources | nindent 12 }}
+---
+{{- if .Values.workerBuild.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aidlc.fullname" . }}-worker-build
+  labels:
+    {{- include "aidlc.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker-build
+spec:
+  replicas: {{ .Values.workerBuild.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aidlc.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker-build
+  template:
+    metadata:
+      labels:
+        {{- include "aidlc.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker-build
+    spec:
+      serviceAccountName: {{ include "aidlc.fullname" . }}-worker-build
+      containers:
+        - name: worker-build
+          image: "{{ .Values.workerBuild.image.repository }}:{{ .Values.workerBuild.image.tag }}"
+          imagePullPolicy: {{ .Values.workerBuild.image.pullPolicy }}
+          {{- with .Values.workerBuild.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args:
+            {{- toYaml .Values.workerBuild.args | nindent 12 }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "aidlc.fullname" . }}-config
+          env:
+            - name: AIDLC_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aidlc.secretName" . }}
+                  key: AIDLC_DATABASE_URL
+          volumeMounts:
+            - name: sandbox
+              mountPath: {{ .Values.workerBuild.sandbox.mountPath }}
+          resources:
+            {{- toYaml .Values.workerBuild.resources | nindent 12 }}
+      volumes:
+        - name: sandbox
+          emptyDir: {}
+{{- end }}

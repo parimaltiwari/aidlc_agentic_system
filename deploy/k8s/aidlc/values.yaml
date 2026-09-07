@@ -1,0 +1,246 @@
+nameOverride: aidlc
+
+imagePullSecrets: []
+
+secrets:
+  create: true
+  name: ""
+  existingSecret: ""
+  databaseURL: postgresql://aidlc:aidlc@postgres-rw.database.svc:5432/aidlc
+  openaiApiKey: ""
+  hfToken: ""
+
+config:
+  execution: temporal
+  temporalAddress: temporal-frontend.temporal.svc.cluster.local:7233
+  temporalNamespace: default
+  llmProvider: litellm
+  model: aidlc-fast
+  modelStrong: aidlc-strong
+  runsDir: /var/lib/aidlc/runs
+
+api:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/parimaltiwari/aidlc
+    tag: latest
+    pullPolicy: IfNotPresent
+  command: []
+  args: ["serve"]
+  service:
+    type: ClusterIP
+    port: 8000
+  ingress:
+    enabled: false
+    className: nginx
+    annotations: {}
+    hosts:
+      - host: aidlc.example.test
+        paths:
+          - path: /
+            pathType: Prefix
+    tls: []
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+workerPhases:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/parimaltiwari/aidlc
+    tag: latest
+    pullPolicy: IfNotPresent
+  command: []
+  args: ["worker", "--queues", "aidlc-phases"]
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+
+workerBuild:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/parimaltiwari/aidlc
+    tag: latest
+    pullPolicy: IfNotPresent
+  command: []
+  args: ["worker", "--queues", "aidlc-build"]
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 8Gi
+  sandbox:
+    mountPath: /var/lib/aidlc/sandbox
+
+litellm:
+  replicaCount: 2
+  image:
+    repository: ghcr.io/berriai/litellm
+    tag: main-latest
+    pullPolicy: IfNotPresent
+  command: []
+  args: ["--config", "/etc/litellm/config.yaml", "--port", "4000"]
+  service:
+    port: 4000
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  config:
+    fastModel: Qwen/Qwen2.5-7B-Instruct
+    strongModel: Qwen/Qwen2.5-32B-Instruct
+    coderModel: Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+    reasoningModel: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+    embedModel: BAAI/bge-m3
+
+vllm:
+  tiers:
+    - name: fast
+      enabled: true
+      replicas: 1
+      model: Qwen/Qwen2.5-7B-Instruct
+      tensorParallelSize: 1
+      quantization: ""
+      gpu: 1
+      port: 8000
+      nodeSelector: {}
+      tolerations: []
+      resources:
+        requests:
+          cpu: "2"
+          memory: 8Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "4"
+          memory: 16Gi
+          nvidia.com/gpu: "1"
+      cache:
+        enabled: true
+        size: 100Gi
+        storageClassName: ""
+    - name: strong
+      enabled: false
+      replicas: 1
+      model: Qwen/Qwen2.5-32B-Instruct
+      tensorParallelSize: 2
+      quantization: awq
+      gpu: 2
+      port: 8000
+      nodeSelector: {}
+      tolerations: []
+      resources:
+        requests:
+          cpu: "4"
+          memory: 32Gi
+          nvidia.com/gpu: "2"
+        limits:
+          cpu: "8"
+          memory: 64Gi
+          nvidia.com/gpu: "2"
+      cache:
+        enabled: true
+        size: 200Gi
+        storageClassName: ""
+    - name: coder
+      enabled: true
+      replicas: 1
+      model: Qwen/Qwen2.5-Coder-32B-Instruct-AWQ
+      tensorParallelSize: 1
+      quantization: awq
+      gpu: 1
+      port: 8000
+      nodeSelector: {}
+      tolerations: []
+      resources:
+        requests:
+          cpu: "4"
+          memory: 24Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: 32Gi
+          nvidia.com/gpu: "1"
+      cache:
+        enabled: true
+        size: 200Gi
+        storageClassName: ""
+    - name: reasoning
+      enabled: false
+      replicas: 1
+      model: deepseek-ai/DeepSeek-R1-Distill-Qwen-32B
+      tensorParallelSize: 2
+      quantization: awq
+      gpu: 2
+      port: 8000
+      nodeSelector: {}
+      tolerations: []
+      resources:
+        requests:
+          cpu: "4"
+          memory: 32Gi
+          nvidia.com/gpu: "2"
+        limits:
+          cpu: "8"
+          memory: 64Gi
+          nvidia.com/gpu: "2"
+      cache:
+        enabled: true
+        size: 200Gi
+        storageClassName: ""
+    - name: embed
+      enabled: false
+      replicas: 1
+      model: BAAI/bge-m3
+      tensorParallelSize: 1
+      quantization: ""
+      gpu: 1
+      port: 8000
+      nodeSelector: {}
+      tolerations: []
+      resources:
+        requests:
+          cpu: "2"
+          memory: 8Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "4"
+          memory: 16Gi
+          nvidia.com/gpu: "1"
+      cache:
+        enabled: true
+        size: 100Gi
+        storageClassName: ""
+
+networkPolicy:
+  enabled: true
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+external:
+  postgres:
+    namespace: database
+    port: 5432
+  temporal:
+    namespace: temporal
+    port: 7233

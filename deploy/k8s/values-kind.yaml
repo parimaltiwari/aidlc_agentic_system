@@ -1,0 +1,42 @@
+nameOverride: aidlc
+
+api:
+  replicaCount: 1
+  image:
+    repository: busybox
+    tag: "1.36"
+  command: ["sleep"]
+  args: ["infinity"]
+
+workerPhases:
+  replicaCount: 1
+  image:
+    repository: busybox
+    tag: "1.36"
+  command: ["sleep"]
+  args: ["infinity"]
+  autoscaling:
+    enabled: false
+
+workerBuild:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: busybox
+    tag: "1.36"
+  command: ["sleep"]
+  args: ["infinity"]
+
+litellm:
+  replicaCount: 1
+  image:
+    repository: busybox
+    tag: "1.36"
+  command: ["sleep"]
+  args: ["infinity"]
+
+vllm:
+  tiers: []
+
+secrets:
+  databaseURL: postgresql://aidlc:aidlc@postgres.example:5432/aidlc

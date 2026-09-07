@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aidlc.fullname" . }}-litellm
+  labels:
+    {{- include "aidlc.labels" . | nindent 4 }}
+    app.kubernetes.io/component: litellm
+spec:
+  replicas: {{ .Values.litellm.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "aidlc.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: litellm
+  template:
+    metadata:
+      labels:
+        {{- include "aidlc.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: litellm
+    spec:
+      serviceAccountName: {{ include "aidlc.fullname" . }}-litellm
+      containers:
+        - name: litellm
+          image: "{{ .Values.litellm.image.repository }}:{{ .Values.litellm.image.tag }}"
+          imagePullPolicy: {{ .Values.litellm.image.pullPolicy }}
+          {{- with .Values.litellm.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args:
+            {{- toYaml .Values.litellm.args | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 4000
+              protocol: TCP
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aidlc.secretName" . }}
+                  key: OPENAI_API_KEY
+                  optional: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/litellm
+              readOnly: true
+          resources:
+            {{- toYaml .Values.litellm.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "aidlc.fullname" . }}-litellm
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aidlc.fullname" . }}-litellm
+  labels:
+    {{- include "aidlc.labels" . | nindent 4 }}
+    app.kubernetes.io/component: litellm
+spec:
+  selector:
+    {{- include "aidlc.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: litellm
+  ports:
+    - name: http
+      port: {{ .Values.litellm.service.port }}
+      targetPort: http
+      protocol: TCP

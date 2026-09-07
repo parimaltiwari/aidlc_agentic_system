@@ -1,0 +1,23 @@
+{{- if .Values.workerPhases.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "aidlc.fullname" . }}-worker-phases
+  labels:
+    {{- include "aidlc.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker-phases
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "aidlc.fullname" . }}-worker-phases
+  minReplicas: {{ .Values.workerPhases.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.workerPhases.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.workerPhases.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

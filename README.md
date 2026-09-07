@@ -116,7 +116,13 @@ Start with [`docs/README.md`](docs/README.md), then read:
    design and migration status.
 3. [`docs/BUILD_GUIDE.md`](docs/BUILD_GUIDE.md) — interfaces, verified stack
    recipe, and future-slice acceptance criteria.
-4. [`docs/PLAN.md`](docs/PLAN.md) — original historical plan.
+4. [`docs/OPERATIONS.md`](docs/OPERATIONS.md) — Kubernetes topology, scaling,
+   backups, observability, and runbooks.
+5. [`docs/SECURITY.md`](docs/SECURITY.md) — security decisions and slice
+   implementation checklist.
+6. [`docs/DEPLOY_DESIGN.md`](docs/DEPLOY_DESIGN.md) — real Deploy targets,
+   promotion, rollback, and acceptance plan.
+7. [`docs/PLAN.md`](docs/PLAN.md) — original historical plan.
 
 ## Verification
 
@@ -145,6 +151,8 @@ aidlc/
 ├── aidlc/tools/           # sandbox, static analysis, tests, git helpers
 ├── aidlc/services/        # FastAPI service
 ├── deploy/                # Compose stack, Postgres init SQL, env example
-├── docs/                  # architecture, design, build guide, plan
+│   └── k8s/               # Helm chart, minimal/full GPU values, operations README
+├── Dockerfile             # Python 3.12 image with the aidlc entrypoint
+├── docs/                  # architecture, operations, security, deploy design
 └── tests/                 # mock, Postgres, and Temporal tests
 ```
