@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aidlc"
+version = "0.1.0"
+description = "A deterministic, multi-agent AI-driven development lifecycle."
+requires-python = ">=3.12"
+dependencies = [
+  "langgraph==0.4.8",
+  "langgraph-checkpoint==2.0.26",
+  "langchain-core==0.3.80",
+  "pydantic==2.11.4",
+  "litellm==1.67.5",
+  "fastapi==0.115.12",
+  "uvicorn==0.34.2",
+  "typer==0.15.3",
+  "rich==14.0.0",
+  "pyyaml==6.0.2",
+]
+
+[project.scripts]
+aidlc = "aidlc.cli:app"
+
+[dependency-groups]
+dev = [
+  "pytest==8.3.5",
+  "ruff==0.11.8",
+  "mypy==1.15.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["aidlc"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+ignore = ["E501", "I001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
