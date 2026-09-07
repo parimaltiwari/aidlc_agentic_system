@@ -18,9 +18,11 @@ Contents
 11. Failure handling and idempotency
 12. Observability
 13. Security and tenancy
-14. Migration plan (implementation slices)
-15. Decisions to confirm
-16. Appendix: alternatives considered
+14. Model serving: hosting open-source models in the enterprise
+15. Model-to-agent assignment matrix
+16. Migration plan (implementation slices)
+17. Decisions to confirm
+18. Appendix: alternatives considered
 
 ---
 
@@ -466,7 +468,147 @@ keeps today's in-process LangGraph path for unit tests.
 
 ---
 
-## 14. Migration plan (implementation slices)
+## 14. Model serving: hosting open-source models in the enterprise
+
+Laptop Ollama is fine for development; production swarms need an in-house
+inference fleet. The AIDLC code needs no change: every agent already calls
+`get_llm(tier).structured(...)`, which resolves to a LiteLLM model string, so
+switching to a hosted fleet is configuration.
+
+### 14.1 Serving stack
+
+```
+  workers ──▶ LiteLLM Proxy (router, auth, budgets, cost log, fallbacks)
+                 │            │             │              │
+                 ▼            ▼             ▼              ▼
+           vLLM: coder    vLLM: strong   vLLM/TGI: fast   vLLM: embed
+           Qwen2.5-Coder  Qwen2.5-72B    Qwen2.5-7B /     bge-m3 /
+           -32B (FP8)     or Llama-3.3   Mistral-Small    nomic-embed
+           2×H100         -70B  4×H100   1×L40S/A10       1×A10
+                 └────────────┴─────────────┴──────────────┘
+                     models pulled from HF Enterprise Hub /
+                     private S3 mirror; GPUs on K8s (KServe/Helm)
+```
+
+| Component | Choice | Why |
+|---|---|---|
+| Inference engine | **vLLM** (Apache-2.0) as default; **HF TGI** where the HF Hub/Inference Endpoints tooling is already standard | Continuous batching, tensor parallel, prefix caching, OpenAI-compatible API, **guided JSON-schema decoding** (`response_format=json_schema` / `guided_json`) which removes most of our validation retries |
+| Router / gateway | **LiteLLM Proxy** (MIT) | One endpoint for all workers; per-team keys and `budget_usd`; model aliases (`aidlc-coder`, `aidlc-strong`, `aidlc-fast`); automatic fallbacks; cost/token logging to Postgres (`agent_invocations.cost_usd`) |
+| Model registry | **Hugging Face Enterprise Hub** (private org, gated repos, audit) or a private S3/MinIO mirror | Versioned weights, provenance, license tracking |
+| Platform | Kubernetes with GPU operator; Helm charts for vLLM/TGI; KServe or Ray Serve for autoscaling | Scale-to-N replicas per model; canary new model versions |
+| Observability | vLLM/TGI Prometheus metrics + LiteLLM logs + OTel spans from `BaseAgent.run` | Latency, queue depth, tokens/s, cost per run |
+| Embeddings | vLLM/TEI serving `bge-m3` or `nomic-embed-text` | Feeds the pgvector project memory (§9) |
+
+### 14.2 Model catalogue (open weights, permissive licenses)
+
+| Role / tier | Primary | Alternatives | Hardware (FP8/AWQ) | License |
+|---|---|---|---|---|
+| `coder` | **Qwen2.5-Coder-32B-Instruct** | DeepSeek-Coder-V2-Lite (16B MoE), Codestral-22B (MNPL — check), Qwen2.5-Coder-7B (cheap) | 2×80GB / 1×80GB (AWQ) | Apache-2.0 |
+| `strong` (architecture, judges) | **Qwen2.5-72B-Instruct** | Llama-3.3-70B-Instruct (Llama license), DeepSeek-V3 (MoE, 8×H100), Mistral-Large (research-only — avoid) | 4×80GB | Qwen: Apache-2.0 |
+| `fast` (intake, clarifier, notes, summaries) | **Qwen2.5-7B-Instruct** | Mistral-Small-24B (Apache-2.0), Llama-3.1-8B, Gemma-2-9B | 1×24–48GB | Apache-2.0 |
+| `reasoning` (triage, threat model, optional) | **DeepSeek-R1-Distill-Qwen-32B** | QwQ-32B | 2×80GB | MIT / Apache-2.0 |
+| `embed` | **bge-m3** | nomic-embed-text-v1.5, e5-mistral-7b | 1×24GB | MIT / Apache-2.0 |
+
+Rule: prefer Apache-2.0/MIT weights; record license per model in the registry;
+Llama-licensed models are acceptable for internal use but flag them.
+
+### 14.3 Configuration
+
+```bash
+AIDLC_LLM_PROVIDER=litellm
+OPENAI_API_BASE=https://llm-gateway.corp.example/v1      # LiteLLM proxy
+OPENAI_API_KEY=<team key issued by the proxy>
+AIDLC_MODEL=aidlc-fast            # proxy aliases → vLLM deployments
+AIDLC_MODEL_STRONG=aidlc-strong
+AIDLC_MODEL_CODER=aidlc-coder     # new tier, see §15
+AIDLC_MODEL_REASONING=aidlc-reasoning
+```
+
+The proxy config maps each alias to a primary deployment and an ordered
+fallback list (e.g. `aidlc-coder → [vllm/qwen2.5-coder-32b, vllm/qwen2.5-coder-7b]`),
+so a GPU outage degrades quality rather than failing the run; the evaluator's
+deterministic checks still guard the result.
+
+### 14.4 Sizing guidance
+
+- One `run_work_item` ≈ 3 agent calls of 1–3k output tokens. On 2×H100 vLLM,
+  Qwen2.5-Coder-32B sustains ~40–60 concurrent sequences at ~30 tok/s each →
+  roughly 5–10 parallel work items comfortably per replica.
+- Judges are few but long-context; one 72B replica serves several concurrent runs.
+- Start: 1 coder replica, 1 strong replica, 1 fast replica (≈ 7 GPUs); scale the
+  coder pool first as swarms grow.
+
+---
+
+## 15. Model-to-agent assignment matrix
+
+Robustness comes from matching model capability to each sub-agent's job and
+from having a declared fallback per agent, rather than one model for all. Tiers
+are resolved through `get_llm(tier)`; we add `coder` and `reasoning` to the
+existing `fast`/`strong`.
+
+| Phase | Agent | Tier | Primary model | Fallback | Rationale |
+|---|---|---|---|---|---|
+| Req | IntakeContextAgent | fast | Qwen2.5-7B | Mistral-Small-24B | Summarisation; cheap |
+| Req | StakeholderClarifierAgent | fast | Qwen2.5-7B | Mistral-Small-24B | Question generation |
+| Req | RequirementsAuthorAgent | strong | Qwen2.5-72B | Llama-3.3-70B | Quality of REQs drives everything downstream |
+| Req | DomainComplianceAgent | strong | Qwen2.5-72B | Llama-3.3-70B | Regulatory nuance |
+| Req | FeasibilityScopeAgent | fast | Qwen2.5-7B | Qwen2.5-72B | Estimates; low risk |
+| Req | RequirementsEvaluator (judge) | strong | Qwen2.5-72B | DeepSeek-R1-Distill-32B | Judge must be stronger than author; use a *different* model family where possible to reduce shared bias |
+| Design | CodebaseAnalystAgent | coder | Qwen2.5-Coder-32B | Qwen2.5-Coder-7B | Reads code |
+| Design | SolutionArchitectAgent | strong | Qwen2.5-72B | Llama-3.3-70B | Trade-off reasoning |
+| Design | APIDataModelerAgent | coder | Qwen2.5-Coder-32B | Qwen2.5-72B | Schema precision |
+| Design | DataModelerAgent | coder | Qwen2.5-Coder-32B | Qwen2.5-72B | Schema precision |
+| Design | ThreatModelAgent | reasoning | DeepSeek-R1-Distill-32B | Qwen2.5-72B | Adversarial thinking |
+| Design | TaskDecomposerAgent | strong | Qwen2.5-72B | Qwen2.5-Coder-32B | Dependency ordering, coverage |
+| Design | DesignEvaluator (judge) | strong | Llama-3.3-70B | Qwen2.5-72B | Cross-family judge |
+| Build | CoderAgent | coder | Qwen2.5-Coder-32B | DeepSeek-Coder-V2-Lite | Code generation |
+| Build | UnitTestWriterAgent | coder | Qwen2.5-Coder-32B | Qwen2.5-Coder-7B | Test generation |
+| Build | CodeReviewerAgent | strong or coder | Qwen2.5-72B | Qwen2.5-Coder-32B | Reviewer ≠ coder model to avoid self-approval bias |
+| Build | IntegratorAgent | fast | Qwen2.5-7B | — | PR text only |
+| Build | BuildEvaluator (judge) | strong | Llama-3.3-70B | Qwen2.5-72B | Deterministic checks dominate; judge is secondary |
+| Test | TestPlannerAgent | strong | Qwen2.5-72B | Qwen2.5-Coder-32B | Coverage reasoning |
+| Test | Integration/E2E/Perf/Security test agents | coder | Qwen2.5-Coder-32B | Qwen2.5-Coder-7B | Test code / assertions |
+| Test | RegressionTriageAgent | reasoning | DeepSeek-R1-Distill-32B | Qwen2.5-72B | Root-cause classification drives backward routing |
+| Test | QualityAgent | fast | Qwen2.5-7B | — | Prose summary only; `go` is computed |
+| Test | TestEvalEvaluator (judge) | strong | Llama-3.3-70B | Qwen2.5-72B | Cross-family judge |
+| Deploy | ReleaseManagerAgent | fast | Qwen2.5-7B | Mistral-Small-24B | Release notes |
+| Deploy | IaCConfigAgent | coder | Qwen2.5-Coder-32B | Qwen2.5-72B | IaC syntax |
+| Deploy | DeploymentExecutor / Observability / Rollback | fast | Qwen2.5-7B | Qwen2.5-72B | Mostly deterministic in future; low LLM load |
+| Deploy | DeployEvaluator (judge) | strong | Qwen2.5-72B | Llama-3.3-70B | Health evidence |
+
+Design rules encoded by the matrix:
+
+1. **Separation of duties** — the judge/reviewer for a phase uses a different
+   model (ideally family) from the producer, so a model's blind spots are less
+   likely to be shared by its critic.
+2. **Spend where it compounds** — requirements authoring, architecture and task
+   decomposition get the strongest model because errors there multiply
+   downstream; leaf agents (notes, summaries) use the cheapest.
+3. **Declared fallbacks** — every agent has a fallback of lower cost/size;
+   the LiteLLM proxy applies it on outage or rate limit, and
+   `agent_invocations.model` records what actually ran.
+4. **Deterministic checks are the floor** — evaluators' code checks pass/fail
+   regardless of which judge model answered, so a weaker fallback judge can
+   lower a score but cannot approve a broken build.
+5. **Per-agent overrides** — `AIDLC_MODEL__<agent-name>` (e.g.
+   `AIDLC_MODEL__coder=aidlc-coder-large`) lets a team pin a model for one
+   agent without touching tiers; resolved in `get_llm(tier, agent=...)`.
+6. **Routing by risk** — `RunContext.risk=high` upgrades all `fast` agents to
+   `strong` and enables the reasoning tier for triage/threat modelling;
+   `low` keeps costs minimal.
+7. **Evaluate the matrix, not just the code** — record per-agent scorecards by
+   model in Postgres; a monthly report (org memory, §9) shows which model
+   assignments yield the best pass rates per agent, and the matrix is tuned
+   from data.
+
+Implementation impact (small): extend `get_llm` with `coder`/`reasoning` tiers,
+per-agent env overrides and risk-based upgrade; add `tier` to the agents listed
+above (currently most default to `fast`); log `model` per invocation.
+
+---
+
+## 16. Migration plan (implementation slices)
 
 Each slice is independently shippable and keeps the mock test suite green.
 
@@ -478,13 +620,14 @@ Each slice is independently shippable and keeps the mock test suite green.
 | 4 | **Build swarm** | `run_work_item` per WI, layered `gather`, sandbox materialisation from artifacts, budget guard | parallel WIs on two local workers |
 | 5 | **Project memory** | `project_memory` view + optional `project_memory` artifact into design/triage agents | design agents receive prior ADRs in prompts |
 | 6 | **Ops** | docker-compose (Temporal, Postgres, MinIO, Ollama), OTel, search attributes, `aidlc list` | end-to-end on two machines |
+| 7 | **Model routing** | `coder`/`reasoning` tiers, per-agent overrides, risk-based upgrade, `model` in invocations; LiteLLM proxy config with aliases + fallbacks; vLLM Helm values for the three starter deployments | mock tests + one real run against the gateway |
 
-Estimated effort: slices 1–3 ≈ one session; 4–6 ≈ one more session, excluding
-external waits (Postgres/Temporal hosts, GPU machines).
+Estimated effort: slices 1–3 ≈ one session; 4–7 ≈ one more session, excluding
+external waits (Postgres/Temporal hosts, GPU machines, model downloads).
 
 ---
 
-## 15. Decisions to confirm
+## 17. Decisions to confirm
 
 1. **Self-hosted Temporal vs Temporal Cloud** — design assumes self-hosted
    (open source, MIT); Cloud is a drop-in if preferred.
@@ -497,10 +640,15 @@ external waits (Postgres/Temporal hosts, GPU machines).
    fewer component) or dedicated instance.
 5. **Auth for approvals** — API key per developer now, OIDC later?
 6. **pgvector** in scope for slice 5 or deferred.
+7. **Inference engine** — vLLM (recommended) vs TGI, or both behind the proxy.
+8. **Judge family** — accept Llama-licensed Llama-3.3-70B as the cross-family
+   judge, or stay Apache-only (Qwen + DeepSeek/Mistral) at some loss of diversity.
+9. **Starter GPU budget** — 7 GPUs (one replica per tier) vs a 2-GPU minimum
+   (Coder-32B AWQ + 7B) with the strong tier on a hosted open-model endpoint.
 
 ---
 
-## 16. Appendix: alternatives considered
+## 18. Appendix: alternatives considered
 
 - **Celery + Redis**: simplest to run, but no durable long waits for approvals,
   no replayable history, crash recovery left to application code. Fine for
