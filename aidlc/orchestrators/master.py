@@ -18,9 +18,23 @@ from aidlc.orchestrators.test_eval import build_test_eval_graph
 from aidlc.storage.factory import get_run_repository
 
 _connections: list[sqlite3.Connection] = []
+_postgres_contexts = []
+_postgres_setup = False
 
 
-def _default_checkpointer() -> SqliteSaver:
+def _default_checkpointer():
+    global _postgres_setup
+    database_url = os.getenv("AIDLC_DATABASE_URL")
+    if database_url:
+        from langgraph.checkpoint.postgres import PostgresSaver
+
+        context = PostgresSaver.from_conn_string(database_url)
+        checkpointer = context.__enter__()
+        _postgres_contexts.append(context)
+        if not _postgres_setup:
+            checkpointer.setup()
+            _postgres_setup = True
+        return checkpointer
     runs_dir = os.getenv("AIDLC_RUNS_DIR", "./runs")
     os.makedirs(runs_dir, exist_ok=True)
     path = os.path.join(runs_dir, "checkpoints.sqlite")

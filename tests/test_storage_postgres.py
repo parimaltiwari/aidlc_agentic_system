@@ -156,3 +156,11 @@ def test_postgres_approval_interrupt_and_resume(monkeypatch):
     resumed = resume_run(run_id, True, "qa")
     assert resumed["run_id"] == run_id
     assert resumed["gate_decisions"][0]["approved"] is True
+
+    import psycopg
+
+    with psycopg.connect(DATABASE_URL) as connection:
+        checkpoint_count = connection.execute(
+            "SELECT count(*) FROM checkpoints WHERE thread_id = %s", (run_id,)
+        ).fetchone()[0]
+    assert checkpoint_count > 0
