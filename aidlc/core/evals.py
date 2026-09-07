@@ -85,7 +85,9 @@ class Evaluator(BaseAgent[EvalScorecard]):
         except Exception as exc:
             judge = None
             judge_unavailable = True
-            fallback_feedback = f"{fallback_feedback}: {exc}"
+            judge_error = str(exc)
+        else:
+            judge_error = fallback_feedback
 
         if judge_unavailable:
             Tracer(state.get("run_id", "local")).record(
@@ -93,9 +95,9 @@ class Evaluator(BaseAgent[EvalScorecard]):
                 self.phase,
                 0,
                 False,
-                fallback_feedback,
+                judge_error,
             )
-            scores = deterministic
+            scores = dict(deterministic)
             overall = mean(scores.values()) if scores else 0.0
             return EvalScorecard(
                 phase=self.phase,
