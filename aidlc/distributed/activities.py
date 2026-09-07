@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-
 from temporalio import activity
 
 from aidlc.core.state import AidlcState
@@ -26,6 +24,13 @@ def _phase_graph(phase: str):
     }[phase]()
 
 
+def _heartbeat(message: str) -> None:
+    try:
+        activity.heartbeat(message)
+    except RuntimeError:
+        pass
+
+
 @activity.defn
 def run_phase(request: PhaseInput) -> PhaseResult:
     repository = get_run_repository()
@@ -40,10 +45,13 @@ def run_phase(request: PhaseInput) -> PhaseResult:
         if change_request.get("id") not in known_ids:
             repository.add_change_request(request.run_id, change_request)
             known_ids.add(change_request.get("id"))
+    context = dict(run.get("context", {}))
+    context["_gate_mode"] = "record"
+    context["_auto_approve"] = request.auto_approve
     state: AidlcState = {
         "run_id": request.run_id,
         "intent": run.get("intent", ""),
-        "context": run.get("context", {}),
+        "context": context,
         "phase": request.phase,
         "artifacts": artifacts,
         "scorecards": [],
@@ -53,26 +61,9 @@ def run_phase(request: PhaseInput) -> PhaseResult:
         "log": [],
         "status": "running",
     }
-    old_gate_mode = os.getenv("AIDLC_GATE_MODE")
-    old_auto_approve = os.getenv("AIDLC_AUTO_APPROVE")
-    os.environ["AIDLC_GATE_MODE"] = "record"
-    if request.auto_approve:
-        os.environ["AIDLC_AUTO_APPROVE"] = "1"
-    else:
-        os.environ.pop("AIDLC_AUTO_APPROVE", None)
-    activity.heartbeat(f"{request.phase}:starting")
-    try:
-        result = _phase_graph(request.phase).invoke(state)
-    finally:
-        if old_gate_mode is None:
-            os.environ.pop("AIDLC_GATE_MODE", None)
-        else:
-            os.environ["AIDLC_GATE_MODE"] = old_gate_mode
-        if old_auto_approve is None:
-            os.environ.pop("AIDLC_AUTO_APPROVE", None)
-        else:
-            os.environ["AIDLC_AUTO_APPROVE"] = old_auto_approve
-        activity.heartbeat(f"{request.phase}:finished")
+    _heartbeat(f"{request.phase}:starting")
+    result = _phase_graph(request.phase).invoke(state)
+    _heartbeat(f"{request.phase}:finished")
     status = result.get("status", "running")
     repository.update_status(request.run_id, status, request.phase)
     scorecards = result.get("scorecards", [])

@@ -7,6 +7,7 @@ import json
 import os
 import socket
 import time
+from threading import Lock
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -16,21 +17,36 @@ from psycopg_pool import ConnectionPool
 
 from aidlc.storage.migrations import apply
 
-DATABASE_URL = os.getenv("AIDLC_DATABASE_URL")
-pool = ConnectionPool(DATABASE_URL, open=False) if DATABASE_URL else None
+_pool_lock = Lock()
+_pools: dict[str, ConnectionPool] = {}
+_schema_urls: set[str] = set()
 
 
 def _pool() -> ConnectionPool:
-    if pool is None:
+    database_url = os.getenv("AIDLC_DATABASE_URL")
+    if not database_url:
         raise RuntimeError("AIDLC_DATABASE_URL is required for Postgres storage")
-    if pool.closed:
-        pool.open(wait=True)
-    return pool
+    with _pool_lock:
+        pool = _pools.get(database_url)
+        if pool is None:
+            pool = ConnectionPool(database_url, open=False)
+            _pools[database_url] = pool
+        if pool.closed:
+            pool.open(wait=True)
+        return pool
 
 
 def _ensure_schema() -> None:
-    with _pool().connection() as connection:
-        apply(connection)
+    database_url = os.getenv("AIDLC_DATABASE_URL")
+    if not database_url:
+        raise RuntimeError("AIDLC_DATABASE_URL is required for Postgres storage")
+    pool = _pool()
+    with _pool_lock:
+        if database_url in _schema_urls:
+            return
+        with pool.connection() as connection:
+            apply(connection)
+        _schema_urls.add(database_url)
 
 
 def _json(value: Any) -> Any:
@@ -207,6 +223,7 @@ class PostgresRunRepository:
         phase: str,
         requested_by: str,
     ) -> None:
+        clean_context = {key: value for key, value in context.items() if not key.startswith("_")}
         with _pool().connection() as connection:
             connection.execute(
                 """
@@ -217,7 +234,7 @@ class PostgresRunRepository:
                   status = EXCLUDED.status, phase = EXCLUDED.phase,
                   requested_by = EXCLUDED.requested_by, updated_at = now()
                 """,
-                (run_id, intent, Jsonb(context), status, phase, requested_by),
+                (run_id, intent, Jsonb(clean_context), status, phase, requested_by),
             )
 
     def update_status(self, run_id: str, status: str, phase: str) -> None:

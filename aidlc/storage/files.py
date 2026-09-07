@@ -104,6 +104,7 @@ class FileRunRepository:
         phase: str,
         requested_by: str,
     ) -> None:
+        context = {key: value for key, value in context.items() if not key.startswith("_")}
         path = self._run_root(run_id) / "run.json"
         current = json.loads(path.read_text()) if path.exists() else {}
         current.update(

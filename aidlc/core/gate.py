@@ -43,6 +43,8 @@ def gate_node(phase: str):
     def node(state: AidlcState) -> dict:
         scorecard = state.get("scorecards", [])[-1]
         context = state.get("context", {})
+        gate_mode = context.get("_gate_mode") or os.getenv("AIDLC_GATE_MODE")
+        auto_approve = context.get("_auto_approve") or os.getenv("AIDLC_AUTO_APPROVE") == "1"
         retries = state.get("retries", {}).get(phase, 0)
         run_id = state.get("run_id", "local")
         attempt = retries + 1
@@ -60,11 +62,11 @@ def gate_node(phase: str):
             repository.update_status(run_id, "running", phase)
             return updates
         if decision.decision == "review":
-            if os.getenv("AIDLC_AUTO_APPROVE") == "1":
+            if auto_approve:
                 decision.approved = True
                 decision.approved_by = "auto"
                 decision.decision = "auto"
-            elif os.getenv("AIDLC_GATE_MODE") == "record":
+            elif gate_mode == "record":
                 repository.add_gate_decision(
                     run_id, phase, attempt, decision.model_dump(mode="json"), None
                 )
