@@ -1,12 +1,29 @@
 """Deterministic and judge-backed phase evaluation."""
 
 import json
+import re
 from statistics import mean
 
 from aidlc.core.agent import BaseAgent
 from aidlc.core.artifacts import EvalScorecard
+from aidlc.core.llm import MockLLM
 from aidlc.core.state import AidlcState
 from aidlc.core.store import ArtifactStore
+from aidlc.core.tracing import Tracer
+
+
+@MockLLM.handler(EvalScorecard)
+def mock_scorecard(_system: str, user: str) -> EvalScorecard:
+    match = re.search(r"Score only these rubric keys: ([^.]+)", user)
+    rubric = [item.strip() for item in match.group(1).split(",")] if match else ["quality"]
+    return EvalScorecard(
+        phase="mock",
+        agent="evaluator",
+        scores={key: 0.85 for key in rubric},
+        overall=0.85,
+        passed=True,
+        feedback=[],
+    )
 
 
 class Evaluator(BaseAgent[EvalScorecard]):
@@ -53,20 +70,42 @@ class Evaluator(BaseAgent[EvalScorecard]):
 
     def run(self, state: AidlcState) -> EvalScorecard:
         deterministic = self.deterministic_checks(state)
-        judges = [super().run(state)]
-        if deterministic and all(value >= 1.0 for value in deterministic.values()):
-            for _ in range(2):
-                if judges[-1].overall >= self.threshold:
-                    break
-                judges.append(super().run(state))
-        judge = max(judges, key=lambda result: result.overall)
-        if (
-            deterministic
-            and all(value >= 1.0 for value in deterministic.values())
-            and judge.scores
-            and all(value == 0 for value in judge.scores.values())
-        ):
-            judge = judge.model_copy(update={"scores": deterministic, "overall": 1.0})
+        fallback_feedback = "LLM judge unavailable; deterministic checks only"
+        try:
+            judges = [super().run(state)]
+            if deterministic and all(value >= 1.0 for value in deterministic.values()):
+                for _ in range(2):
+                    if judges[-1].overall >= self.threshold:
+                        break
+                    judges.append(super().run(state))
+            judge = max(judges, key=lambda result: result.overall)
+            judge_unavailable = bool(judge.scores) and all(
+                value == 0 for value in judge.scores.values()
+            )
+        except Exception as exc:
+            judge = None
+            judge_unavailable = True
+            fallback_feedback = f"{fallback_feedback}: {exc}"
+
+        if judge_unavailable:
+            Tracer(state.get("run_id", "local")).record(
+                f"{self.name}:llm-judge",
+                self.phase,
+                0,
+                False,
+                fallback_feedback,
+            )
+            scores = deterministic
+            overall = mean(scores.values()) if scores else 0.0
+            return EvalScorecard(
+                phase=self.phase,
+                agent=self.name,
+                scores=scores,
+                overall=overall,
+                passed=overall >= self.threshold,
+                feedback=[fallback_feedback],
+            )
+
         scores = {
             key: min(deterministic.get(key, 1.0), value) for key, value in judge.scores.items()
         }

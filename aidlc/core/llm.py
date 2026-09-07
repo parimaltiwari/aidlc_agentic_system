@@ -9,8 +9,6 @@ from typing import Protocol, TypeVar
 from litellm import completion
 from pydantic import BaseModel, ValidationError
 
-from aidlc.core.artifacts import EvalScorecard
-
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -30,17 +28,6 @@ class MockLLM:
         return decorator
 
     def structured(self, *, system: str, user: str, schema: type[T]) -> T:
-        if schema is EvalScorecard:
-            return schema.model_validate(
-                {
-                    "phase": "mock",
-                    "agent": "evaluator",
-                    "scores": {"quality": 0.85, "coverage": 0.85},
-                    "overall": 0.85,
-                    "passed": True,
-                    "feedback": [],
-                }
-            )
         if schema not in self.registry:
             raise NotImplementedError(f"No MockLLM handler registered for {schema.__name__}")
         return self.registry[schema](system, user)
@@ -62,7 +49,6 @@ class LiteLLMClient:
         }
         json_object_format = {"type": "json_object"}
         use_schema = True
-        last_result: T | None = None
         for _attempt in range(4):
             try:
                 kwargs = {
@@ -74,24 +60,12 @@ class LiteLLMClient:
                 }
                 if self.api_base:
                     kwargs["api_base"] = self.api_base
-                if use_schema:
-                    response = completion(**kwargs)
-                else:
-                    response = completion(**kwargs)
+                response = completion(**kwargs)
                 content = response.choices[0].message.content
                 if content is None:
                     raise ValueError("LLM returned an empty response")
                 content = re.sub(r"^\s*```(?:json)?\s*|\s*```\s*$", "", content.strip())
-                result = schema.model_validate_json(content)
-                if (
-                    schema is EvalScorecard
-                    and result.scores
-                    and all(value == 0 for value in result.scores.values())
-                ):
-                    last_result = result
-                    use_schema = False
-                    raise ValueError("structured evaluator output contained only zero scores")
-                return result
+                return schema.model_validate_json(content)
             except (ValidationError, ValueError, TypeError) as exc:
                 last_error = exc
                 messages.append({"role": "user", "content": f"Validation error: {exc}"})
@@ -99,8 +73,6 @@ class LiteLLMClient:
                 use_schema = False
                 last_error = exc
                 messages.append({"role": "user", "content": f"Validation error: {exc}"})
-        if last_result is not None:
-            return last_result
         raise ValueError(f"LLM output did not validate: {last_error}")
 
 

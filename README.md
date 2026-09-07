@@ -93,3 +93,12 @@ AIDLC_MODEL_STRONG=qwen2.5:7b \
 OLLAMA_BASE_URL=http://127.0.0.1:11434 \
 uv run aidlc run "Add password reset" --provider ollama --auto-approve
 ```
+
+**Performance notes.** On this 8-CPU, no-GPU machine, observed per-call
+latencies were approximately 3–82 seconds for `qwen2.5:3b` (with one
+153-second outlier), and 3–78 seconds for `qwen2.5:7b` (with a measured
+153-second outlier). A `qwen2.5-coder:1.5b` run was started and measured
+approximately 1–158 seconds per call during Requirements/Design, but was
+stopped before completion. For production-scale runs, use a GPU or a hosted
+open-model endpoint such as vLLM, Together, or Groq via `--provider litellm`,
+for example `AIDLC_MODEL=groq/llama-3.1-70b-versatile`.
