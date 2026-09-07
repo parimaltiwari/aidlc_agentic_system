@@ -7,6 +7,7 @@ from aidlc.agents import common  # noqa: F401
 class ReleaseManagerAgent(BaseAgent[ReleaseNotes]):
     name, phase, output_schema = "release-manager", "deploy", ReleaseNotes
     system_prompt = "Prepare versioned release notes and highlight breaking changes."
+    relevant_artifacts = ("design_package", "quality_report")
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)
@@ -15,6 +16,7 @@ class ReleaseManagerAgent(BaseAgent[ReleaseNotes]):
 class IaCConfigAgent(BaseAgent[InfraPlan]):
     name, phase, output_schema = "iac-config", "deploy", InfraPlan
     system_prompt = "Describe safe infrastructure and configuration changes for deployment."
+    relevant_artifacts = ("design_package", "quality_report", "release_notes")
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)
@@ -25,6 +27,7 @@ class DeploymentExecutorAgent(BaseAgent[DeployLog]):
 
     name, phase, output_schema = "deployment-executor", "deploy", DeployLog
     system_prompt = "Simulate a controlled deployment and record health checks."
+    relevant_artifacts = ("infra_plan", "release_notes")
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)
@@ -35,6 +38,7 @@ class ObservabilityVerifierAgent(BaseAgent[SoakReport]):
 
     name, phase, output_schema = "observability-verifier", "deploy", SoakReport
     system_prompt = "Simulate a soak window and report SLO breaches."
+    relevant_artifacts = ("deploy_log",)
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)
@@ -45,6 +49,7 @@ class RollbackAgent(BaseAgent[RollbackReport]):
 
     name, phase, output_schema = "rollback", "deploy", RollbackReport
     system_prompt = "Decide whether simulated health evidence requires rollback."
+    relevant_artifacts = ("deploy_log", "soak_report")
 
     def build_user_prompt(self, state: AidlcState) -> str:
         return self.artifacts_json(state)

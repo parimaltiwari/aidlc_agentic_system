@@ -51,11 +51,16 @@ def gate_node(phase: str):
             updates["status"] = "running"
             updates["gate_decisions"] = [decision.model_dump(mode="json")]
             return updates
-        if decision.decision == "review" and os.getenv("AIDLC_AUTO_APPROVE") != "1":
-            answer = interrupt({"phase": phase, "reason": decision.reason})
-            decision.approved = bool(answer.get("approved"))
-            decision.approved_by = answer.get("by")
-            decision.decision = "auto" if decision.approved else "block"
+        if decision.decision == "review":
+            if os.getenv("AIDLC_AUTO_APPROVE") == "1":
+                decision.approved = True
+                decision.approved_by = "auto"
+                decision.decision = "auto"
+            else:
+                answer = interrupt({"phase": phase, "reason": decision.reason})
+                decision.approved = bool(answer.get("approved"))
+                decision.approved_by = answer.get("by")
+                decision.decision = "auto" if decision.approved else "block"
         updates["status"] = (
             "completed"
             if phase == "deploy" and decision.approved

@@ -1,6 +1,7 @@
 """JSONL run tracing."""
 
 import json
+import os
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 class Tracer:
     def __init__(self, run_id: str, root: str | None = None) -> None:
         self.run_id = run_id
-        self.path = Path(root or "runs") / run_id / "trace.jsonl"
+        self.path = Path(root or os.getenv("AIDLC_RUNS_DIR", "./runs")) / run_id / "trace.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def record(

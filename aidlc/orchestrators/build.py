@@ -12,7 +12,7 @@ from aidlc.agents.build.agents import (
     IntegratorAgent,
     UnitTestWriterAgent,
 )
-from aidlc.core.artifacts import CodeDiff, EnvReport, StaticReport, ToolResult
+from aidlc.core.artifacts import CodeDiff, EnvReport, FileChange, StaticReport, ToolResult
 from aidlc.core.evals import BuildEvaluator
 from aidlc.core.gate import gate_node
 from aidlc.core.state import AidlcState
@@ -35,6 +35,7 @@ def scaffold_node(state: AidlcState):
         "import sys\nfrom pathlib import Path\n\nsys.path.insert(0, str(Path(__file__).parents[1]))\n",
         encoding="utf-8",
     )
+    (sandbox / "pytest.ini").write_text("[pytest]\ntestpaths = tests\n", encoding="utf-8")
     report = EnvReport(
         python_version=sys.version.split()[0],
         tools_available=["python", "ruff", "pytest"],
@@ -67,22 +68,37 @@ def _ordered_items(state: AidlcState) -> list[dict]:
     return ordered
 
 
+def _remap_code_diff(diff: CodeDiff, work_id: str, tests: bool) -> CodeDiff:
+    slug = work_id.lower().replace("-", "_")
+    expected = f"tests/test_{slug}.py" if tests else f"aidlc_generated/{slug}.py"
+    changes = [
+        FileChange(
+            path=expected if change.path.endswith(".py") else change.path,
+            action=change.action,
+            content=change.content,
+        )
+        for change in diff.changes
+    ]
+    return diff.model_copy(update={"work_item_id": work_id, "changes": changes})
+
+
 def work_items_node(state: AidlcState):
     updates = {}
     logs = []
     for item in _ordered_items(state):
         work_id = item["id"]
         coder = CoderAgent(work_id)
-        diff = coder.run(state)
+        diff = _remap_code_diff(coder.run(state), work_id, tests=False)
         write_changes(state, diff, root=_sandbox(state))
         updates[coder.output_key] = diff.model_dump(mode="json")
         writer = UnitTestWriterAgent(work_id)
         writer_state = {**state, "artifacts": {**state.get("artifacts", {}), **updates}}
-        test_diff = writer.run(writer_state)
+        test_diff = _remap_code_diff(writer.run(writer_state), work_id, tests=True)
         write_changes(state, test_diff, root=_sandbox(state))
         updates[writer.output_key] = test_diff.model_dump(mode="json")
         reviewer = CodeReviewerAgent(work_id)
-        review = reviewer.run(writer_state)
+        review_state = {**state, "artifacts": {**state.get("artifacts", {}), **updates}}
+        review = reviewer.run(review_state)
         updates[reviewer.output_key] = review.model_dump(mode="json")
         logs.append(f"build:completed {work_id}")
     return {"artifacts": updates, "log": logs}

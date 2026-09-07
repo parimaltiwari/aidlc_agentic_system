@@ -59,3 +59,37 @@ run; only an approved Deploy gate produces `completed`.
 `agents/` contains phase specialists; `orchestrators/` contains phase graphs and
 the master FSM; `tools/` contains sandbox/git/static/test helpers; and
 `services/` contains the FastAPI API.
+
+## Run with a local open-source model (Ollama)
+
+Install Ollama and start its local server:
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+ollama serve
+```
+
+Pull the fast and strong models in another terminal:
+
+```bash
+ollama pull qwen2.5:3b
+ollama pull qwen2.5:7b
+```
+
+Run the lifecycle without API keys. The Ollama provider uses
+`qwen2.5:3b` for fast agents and `qwen2.5:7b` for evaluator agents by default:
+
+```bash
+AIDLC_AUTO_APPROVE=1 uv run aidlc run \
+  "Add password reset via email to the user service" \
+  --provider ollama --auto-approve --verbose
+```
+
+Override the models or server when needed:
+
+```bash
+AIDLC_MODEL=qwen2.5:3b \
+AIDLC_MODEL_STRONG=qwen2.5:7b \
+OLLAMA_BASE_URL=http://127.0.0.1:11434 \
+uv run aidlc run "Add password reset" --provider ollama --auto-approve
+```

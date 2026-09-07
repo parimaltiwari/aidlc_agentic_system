@@ -24,6 +24,7 @@ class BaseAgent(Generic[T], ABC):
     tier = "fast"
     output_schema: type[T]
     system_prompt = "Return a valid structured artifact."
+    relevant_artifacts: tuple[str, ...] = ()
 
     @property
     def output_key(self) -> str:
@@ -59,6 +60,8 @@ class BaseAgent(Generic[T], ABC):
 
         return node
 
-    @staticmethod
-    def artifacts_json(state: AidlcState) -> str:
-        return json.dumps(state.get("artifacts", {}), sort_keys=True)
+    def artifacts_json(self, state: AidlcState) -> str:
+        artifacts = state.get("artifacts", {})
+        if self.relevant_artifacts:
+            artifacts = {key: artifacts[key] for key in self.relevant_artifacts if key in artifacts}
+        return json.dumps(artifacts, sort_keys=True)

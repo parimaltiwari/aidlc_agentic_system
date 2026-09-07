@@ -193,7 +193,13 @@ def workplan(_system: str, user: str) -> WorkPlan:
 def code_diff(_system: str, user: str) -> CodeDiff:
     wid = _work_id(user)
     slug = wid.lower().replace("-", "_")
-    if "write tests" in user.lower():
+    prompt = user.lower()
+    if (
+        "write tests" in prompt
+        or "test module" in prompt
+        or "exactly tests/test_" in prompt
+        or "exact test path" in prompt
+    ):
         changes = [
             FileChange(
                 path=f"tests/test_{slug}.py",
