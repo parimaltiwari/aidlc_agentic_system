@@ -10,7 +10,7 @@ import uvicorn
 from rich.console import Console
 from rich.table import Table
 
-from aidlc.core.store import ArtifactStore
+from aidlc.storage.factory import get_artifact_store
 from aidlc.orchestrators.master import resume_run, run_pipeline
 
 app = typer.Typer(help="AIDLC multi-agent development lifecycle")
@@ -72,7 +72,7 @@ def run(
 
 @app.command()
 def show(run_id: str):
-    store = ArtifactStore(run_id)
+    store = get_artifact_store(run_id)
     for artifact in store.list():
         console.print(artifact)
 

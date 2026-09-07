@@ -16,7 +16,7 @@ from aidlc.core.artifacts import CodeDiff, EnvReport, FileChange, StaticReport, 
 from aidlc.core.evals import BuildEvaluator
 from aidlc.core.gate import gate_node
 from aidlc.core.state import AidlcState
-from aidlc.core.store import ArtifactStore
+from aidlc.storage.factory import get_artifact_store
 from aidlc.orchestrators.base import assemble, write_changes
 from aidlc.tools import static_analysis, test_runner
 from aidlc.tools.git_tool import commit, copy_repo
@@ -41,7 +41,7 @@ def scaffold_node(state: AidlcState):
         tools_available=["python", "ruff", "pytest"],
         baseline_ok=True,
     )
-    ArtifactStore(state.get("run_id", "local")).save("env_report", report)
+    get_artifact_store(state.get("run_id", "local")).save("env_report", report)
     return {
         "artifacts": {"env_report": report.model_dump(mode="json")},
         "log": ["build:scaffold-env"],
@@ -138,7 +138,7 @@ def integrator_node(state: AidlcState):
                 "commits": [commit_id],
             }
         )
-    ArtifactStore(state.get("run_id", "local")).save("pull_request_artifact", result)
+    get_artifact_store(state.get("run_id", "local")).save("pull_request_artifact", result)
     return {
         "artifacts": {"pull_request_artifact": result.model_dump(mode="json")},
         "log": ["build:integrator produced pull_request_artifact"],

@@ -17,6 +17,7 @@ class LLMClient(Protocol):
 
 
 class MockLLM:
+    model = "mock"
     registry: dict[type[BaseModel], Callable[[str, str], BaseModel]] = {}
 
     @classmethod

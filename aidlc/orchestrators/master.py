@@ -15,6 +15,7 @@ from aidlc.orchestrators.deploy import build_deploy_graph
 from aidlc.orchestrators.design import build_design_graph
 from aidlc.orchestrators.requirements import build_requirements_graph
 from aidlc.orchestrators.test_eval import build_test_eval_graph
+from aidlc.storage.factory import get_run_repository
 
 _connections: list[sqlite3.Connection] = []
 
@@ -177,12 +178,28 @@ def run_pipeline(
     thread_id: str | None = None,
 ) -> AidlcState:
     run_id = run_id or str(uuid.uuid4())
+    run_context = context or {
+        "repo_path": None,
+        "target_env": "simulation",
+        "risk_level": "low",
+        "budget_usd": 25.0,
+        "stakeholders": [],
+    }
+    get_run_repository().upsert_run(
+        run_id,
+        intent,
+        run_context,
+        "running",
+        "requirements",
+        run_context.get("requested_by", os.getenv("AIDLC_USER", "local")),
+    )
     graph = build_master_graph()
     config = {"configurable": {"thread_id": thread_id or run_id}}
     result = graph.invoke(_initial_state(intent, context, run_id), config=config)
     checkpoint = graph.get_state(config)
     if any(task.interrupts for task in checkpoint.tasks):
         result["status"] = "awaiting_approval"
+    get_run_repository().update_status(run_id, result["status"], result.get("phase", "requirements"))
     return result
 
 
@@ -196,4 +213,5 @@ def resume_run(run_id: str, approved: bool, by: str) -> AidlcState:
     checkpoint = graph.get_state(config)
     if any(task.interrupts for task in checkpoint.tasks):
         result["status"] = "awaiting_approval"
+    get_run_repository().update_status(run_id, result["status"], result.get("phase", "requirements"))
     return result

@@ -8,8 +8,7 @@ from aidlc.core.agent import BaseAgent
 from aidlc.core.artifacts import EvalScorecard
 from aidlc.core.llm import MockLLM
 from aidlc.core.state import AidlcState
-from aidlc.core.store import ArtifactStore
-from aidlc.core.tracing import Tracer
+from aidlc.storage.factory import get_artifact_store, get_run_repository, get_tracer
 
 
 @MockLLM.handler(EvalScorecard)
@@ -59,7 +58,14 @@ class Evaluator(BaseAgent[EvalScorecard]):
     def as_node(self):
         def node(state: AidlcState) -> dict:
             result = self.run(state)
-            ArtifactStore(state.get("run_id", "local")).save(self.output_key, result)
+            run_id = state.get("run_id", "local")
+            get_artifact_store(run_id).save(self.output_key, result)
+            get_run_repository().add_scorecard(
+                run_id,
+                self.phase,
+                state.get("retries", {}).get(self.phase, 0) + 1,
+                result.model_dump(mode="json"),
+            )
             return {
                 "artifacts": {self.output_key: result.model_dump(mode="json")},
                 "scorecards": [result.model_dump(mode="json")],
@@ -79,9 +85,7 @@ class Evaluator(BaseAgent[EvalScorecard]):
                         break
                     judges.append(super().run(state))
             judge = max(judges, key=lambda result: result.overall)
-            judge_unavailable = bool(judge.scores) and all(
-                value == 0 for value in judge.scores.values()
-            )
+            judge_unavailable = not judge.scores or all(value == 0 for value in judge.scores.values())
         except Exception as exc:
             judge = None
             judge_unavailable = True
@@ -90,7 +94,7 @@ class Evaluator(BaseAgent[EvalScorecard]):
             judge_error = fallback_feedback
 
         if judge_unavailable:
-            Tracer(state.get("run_id", "local")).record(
+            get_tracer(state.get("run_id", "local")).record(
                 f"{self.name}:llm-judge",
                 self.phase,
                 0,

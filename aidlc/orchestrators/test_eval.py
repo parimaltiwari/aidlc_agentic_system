@@ -13,7 +13,7 @@ from aidlc.core.gate import gate_node
 from aidlc.core.evals import TestEvalEvaluator
 from aidlc.core.artifacts import QualityReport, TraceabilityMatrix
 from aidlc.core.state import AidlcState
-from aidlc.core.store import ArtifactStore
+from aidlc.storage.factory import get_artifact_store
 from aidlc.orchestrators.base import agent_node, assemble
 
 
@@ -29,7 +29,7 @@ def plan_node(state: AidlcState):
     for row in traceability.get("rows", []):
         rows.append({**row, "test_ids": test_by_requirement.get(row["requirement_id"], [])})
     package["traceability"] = TraceabilityMatrix(rows=rows).model_dump(mode="json")
-    ArtifactStore(state.get("run_id", "local")).save("test_plan", plan)
+    get_artifact_store(state.get("run_id", "local")).save("test_plan", plan)
     return {
         "artifacts": {"test_plan": plan.model_dump(mode="json"), "design_package": package},
         "log": ["test_eval:test-planner updated traceability"],

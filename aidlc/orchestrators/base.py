@@ -5,7 +5,7 @@ from typing import Any
 
 from aidlc.core.agent import BaseAgent
 from aidlc.core.state import AidlcState
-from aidlc.core.store import ArtifactStore
+from aidlc.storage.factory import get_artifact_store
 
 
 def agent_node(agent: BaseAgent):
@@ -13,7 +13,7 @@ def agent_node(agent: BaseAgent):
 
 
 def assemble(state: AidlcState, name: str, value: Any) -> dict:
-    ArtifactStore(state.get("run_id", "local")).save(name, value)
+    get_artifact_store(state.get("run_id", "local")).save(name, value)
     return {"artifacts": {name: value.model_dump(mode="json")}, "log": [f"assembled {name}"]}
 
 

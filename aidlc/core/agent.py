@@ -8,8 +8,7 @@ from typing import Generic, TypeVar
 
 from aidlc.core.llm import get_llm
 from aidlc.core.state import AidlcState
-from aidlc.core.store import ArtifactStore
-from aidlc.core.tracing import Tracer
+from aidlc.storage.factory import get_artifact_store, get_tracer
 
 T = TypeVar("T")
 
@@ -36,23 +35,39 @@ class BaseAgent(Generic[T], ABC):
 
     def run(self, state: AidlcState) -> T:
         started = time.perf_counter()
-        tracer = Tracer(state.get("run_id", "local"))
+        llm = get_llm(self.tier)
+        tracer = get_tracer(state.get("run_id", "local"))
         try:
-            result = get_llm(self.tier).structured(
+            result = llm.structured(
                 system=self.system_prompt,
                 user=self.build_user_prompt(state),
                 schema=self.output_schema,
             )
-            tracer.record(self.name, self.phase, time.perf_counter() - started, True)
+            tracer.record(
+                self.name,
+                self.phase,
+                time.perf_counter() - started,
+                True,
+                model=getattr(llm, "model", None),
+                work_item_id=getattr(self, "work_item_id", None),
+            )
             return result
         except Exception as exc:
-            tracer.record(self.name, self.phase, time.perf_counter() - started, False, str(exc))
+            tracer.record(
+                self.name,
+                self.phase,
+                time.perf_counter() - started,
+                False,
+                str(exc),
+                model=getattr(llm, "model", None),
+                work_item_id=getattr(self, "work_item_id", None),
+            )
             raise
 
     def as_node(self):
         def node(state: AidlcState) -> dict:
             result = self.run(state)
-            ArtifactStore(state.get("run_id", "local")).save(self.output_key, result)
+            get_artifact_store(state.get("run_id", "local")).save(self.output_key, result)
             return {
                 "artifacts": {self.output_key: result.model_dump(mode="json")},
                 "log": [f"{self.phase}:{self.name} produced {self.output_key}"],

@@ -6,6 +6,7 @@ from langgraph.types import interrupt
 
 from aidlc.core.artifacts import EvalScorecard, GateDecision
 from aidlc.core.state import AidlcState
+from aidlc.storage.factory import get_run_repository
 
 
 class GatePolicy:
@@ -43,6 +44,9 @@ def gate_node(phase: str):
         scorecard = state.get("scorecards", [])[-1]
         context = state.get("context", {})
         retries = state.get("retries", {}).get(phase, 0)
+        run_id = state.get("run_id", "local")
+        attempt = retries + 1
+        repository = get_run_repository()
         decision = GatePolicy().decide(
             EvalScorecard.model_validate(scorecard), context.get("risk_level", "low"), retries
         )
@@ -50,13 +54,27 @@ def gate_node(phase: str):
         if not decision.approved and not decision.decision == "block" and not scorecard["passed"]:
             updates["status"] = "running"
             updates["gate_decisions"] = [decision.model_dump(mode="json")]
+            repository.add_gate_decision(
+                run_id, phase, attempt, decision.model_dump(mode="json"), decision.approved_by
+            )
+            repository.update_status(run_id, "running", phase)
             return updates
         if decision.decision == "review":
             if os.getenv("AIDLC_AUTO_APPROVE") == "1":
                 decision.approved = True
                 decision.approved_by = "auto"
                 decision.decision = "auto"
+            elif os.getenv("AIDLC_GATE_MODE") == "record":
+                repository.add_gate_decision(
+                    run_id, phase, attempt, decision.model_dump(mode="json"), None
+                )
+                repository.update_status(run_id, "awaiting_approval", phase)
+                updates["status"] = "awaiting_approval"
+                return updates
             else:
+                repository.add_gate_decision(
+                    run_id, phase, attempt, decision.model_dump(mode="json"), None
+                )
                 answer = interrupt({"phase": phase, "reason": decision.reason})
                 decision.approved = bool(answer.get("approved"))
                 decision.approved_by = answer.get("by")
@@ -71,6 +89,10 @@ def gate_node(phase: str):
             )
         )
         updates["gate_decisions"] = [decision.model_dump(mode="json")]
+        repository.add_gate_decision(
+            run_id, phase, attempt, decision.model_dump(mode="json"), decision.approved_by
+        )
+        repository.update_status(run_id, updates["status"], phase)
         return updates
 
     return node
