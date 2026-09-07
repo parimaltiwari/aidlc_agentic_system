@@ -270,9 +270,11 @@ phase. `run()`:
 | passed, otherwise (low <0.85, or medium/high risk) | `review` |
 
 `gate_node`: on `review`, if `AIDLC_AUTO_APPROVE=1` → approve automatically;
-else `interrupt({phase, reason})` and wait for `{"approved", "by"}`. Approved
-deploy gate → `status="completed"`; approved other gate → `running`; rejected →
-`blocked`.
+in Temporal activity record mode, the activity context sets `_gate_mode="record"`
+and returns `awaiting_approval` without calling `interrupt()`; otherwise
+`interrupt({phase, reason})` waits for `{"approved", "by"}`. Approved deploy
+gate → `status="completed"`; approved other gate → `running`; rejected →
+`blocked`. Context values take precedence over the environment variables.
 
 ---
 
@@ -375,9 +377,10 @@ An approved deploy gate sets `status="completed"`. Deployment is
 
 | Service | File | Behaviour |
 |---|---|---|
-| Artifact store | `aidlc/core/store.py` | `$AIDLC_RUNS_DIR/<run_id>/artifacts/<key>.vN.json` + `<key>.latest` pointer; every save is a new version. |
-| Tracer | `aidlc/core/tracing.py` | `runs/<run_id>/trace.jsonl` — one line per agent call: `ts, run_id, phase, agent, duration_ms, ok, error`. |
-| Checkpointer | `aidlc/orchestrators/master.py` | `SqliteSaver` at `runs/checkpoints.sqlite`; thread id = run id. |
+| Storage package/factory | `aidlc/storage/{protocols,files,postgres,factory}.py` | File implementations remain the default; `AIDLC_DATABASE_URL` selects Postgres artifacts, traces, run history, scorecards, gates, and events. |
+| Artifact store | `aidlc/storage/files.py` / `aidlc/storage/postgres.py` | File artifacts use `$AIDLC_RUNS_DIR/<run_id>/artifacts/<key>.vN.json`; Postgres uses versioned inline JSONB and SHA-256 deduplication. |
+| Tracer | `aidlc/storage/files.py` / `aidlc/storage/postgres.py` | JSONL by default; Postgres `agent_invocations` when configured. |
+| Checkpointer | `aidlc/orchestrators/master.py` | `SqliteSaver` at `runs/checkpoints.sqlite` by default; `PostgresSaver` when `AIDLC_DATABASE_URL` is set; thread id = run id. |
 | Static analysis | `aidlc/tools/static_analysis.py` | `python -m ruff check <sandbox>`. |
 | Test runner | `aidlc/tools/test_runner.py` | `python -m pytest -q` in sandbox. |
 | Sandbox / diffs | `aidlc/orchestrators/base.py::write_changes`, `aidlc/tools/sandbox.py` | Apply `FileChange`s (create/modify/delete) under `runs/<id>/sandbox`. |
@@ -395,8 +398,14 @@ aidlc run "<intent>" [--repo PATH] [--risk low|medium|high] [--auto-approve]
                      [--provider mock|litellm|ollama] [--verbose]
 aidlc show <run_id>                       # list versioned artifacts
 aidlc approve <run_id> --by NAME [--reject]
+aidlc status <run_id> [--execution temporal] # query local or Temporal status
+aidlc worker [--address HOST:PORT] [--namespace NAME]
 aidlc serve                               # uvicorn on 127.0.0.1:8000
 ```
+
+`--execution temporal` or `AIDLC_EXECUTION=temporal` selects the Temporal
+client path for `run`, `approve`, and `status`; otherwise the in-process path is
+used. `AIDLC_DATABASE_URL` selects the shared Postgres repository.
 
 **HTTP API** (`aidlc/services/api.py`, FastAPI):
 
@@ -439,8 +448,9 @@ rather than passing.
   only Build's unit tests are actually executed. Wiring real runners for these
   is the next roadmap step.
 - Deployment agents are simulations.
-- The API keeps run records in memory; restart loses `GET /runs` listing (the
-  SQLite checkpoint and on-disk artifacts persist).
-- Roadmap: eval rubrics with golden sets, per-agent model routing/budgets,
-  real integration test execution, real deploy adapters, dogfooding on this
-  repo.
+- Slices 4–7 remain planned: distributed per-work-item build fan-out, relational
+  project memory, OTel/team operations, authentication, and model routing.
+- The API's local in-process listing is in memory; distributed Temporal status
+  is queried from the workflow and artifacts/history come from Postgres.
+- Deployment agents remain simulations, and real integration/e2e/performance/
+  security runners are not yet wired into Test/Eval.

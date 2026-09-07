@@ -1,6 +1,6 @@
 # AIDLC Distributed Execution Design — Temporal + Postgres Shared History
 
-Status: **Draft for review — design only, no implementation yet.**
+Status: **Slices 1–3 implemented; slices 4–7 planned.**
 Companion to `docs/DESIGN.md` (single-machine architecture).
 
 Contents
@@ -54,17 +54,17 @@ Contents
 
 ## 2. Current state and what changes
 
-| Concern | Today (single machine) | Target |
+| Concern | Current implementation | Target |
 |---|---|---|
-| Orchestration across phases | LangGraph master graph, `master.py` | **Temporal workflow** (`AidlcRunWorkflow`) |
-| Orchestration inside a phase | LangGraph subgraph | unchanged, executed inside a Temporal **activity** |
-| Run state / checkpoints | `SqliteSaver` at `runs/checkpoints.sqlite` | Temporal event history (cross-phase) + **Postgres** LangGraph checkpointer (intra-phase) |
-| Artifacts | `runs/<id>/artifacts/*.vN.json` | **Postgres** `artifact_versions` (+ optional S3 for large blobs) |
-| Trace | `runs/<id>/trace.jsonl` | **Postgres** `agent_invocations` |
-| Human gates | LangGraph `interrupt()` + `Command(resume)` | Temporal **Signal** `approve_gate`, workflow `wait_condition` |
-| Retries / backward routing | `_route_update` in `master.py` | same logic, expressed in workflow code |
-| Build sandbox | `runs/<id>/sandbox` on local disk | per-activity local scratch; results (diffs, `StaticReport`) persisted to Postgres; sandbox archived to object storage |
-| CLI / API | in-process `run_pipeline` | Temporal client: `start_workflow`, `signal`, `query` |
+| Orchestration across phases | **Implemented:** Temporal workflow (`AidlcRunWorkflow`) in `aidlc/distributed/workflow.py`; local LangGraph master remains the default | Per-work-item distributed build orchestration |
+| Orchestration inside a phase | **Implemented:** LangGraph subgraph executed inside `run_phase` activity | Per-agent/per-work-item activities |
+| Run state / checkpoints | **Implemented:** Temporal event history; local master selects `PostgresSaver` when `AIDLC_DATABASE_URL` is set and SQLite remains the default. Temporal phase activities currently invoke phase graphs without a phase checkpointer. | Cross-machine build checkpoint policy |
+| Artifacts | **Implemented:** Postgres `artifact_versions` when configured; file artifacts by default | MinIO/S3 for large blobs and archives |
+| Trace | **Implemented:** Postgres `agent_invocations` when configured; JSONL by default | OpenTelemetry spans and metrics |
+| Human gates | **Implemented:** Temporal `approve_gate` Signal and `wait_condition` in distributed mode; LangGraph `interrupt()` locally | Approval broker and identity controls |
+| Retries / backward routing | **Implemented:** workflow mirrors master retries and triage routing, including two retry and two backward-hop limits | Distributed build fan-out |
+| Build sandbox | **Implemented:** activity-local `runs/<id>/sandbox` and persisted artifacts | Portable sandbox reconstruction and archives |
+| CLI / API | **Implemented:** Temporal client `start_workflow`, Signal, Query, `aidlc worker`, `--execution temporal`, and `aidlc status` | Team listing, authentication, and OTel |
 
 Everything under `aidlc/agents/**`, `aidlc/core/artifacts.py`, `aidlc/core/evals.py`,
 `aidlc/core/gate.py` (policy part) and the five phase graphs is retained.
@@ -140,9 +140,10 @@ Rules:
   clocks except `workflow.now()`.
 - **Activities** do all I/O: load state from Postgres, run the LangGraph phase
   graph, persist artifacts/trace/scorecards, return a small `PhaseResult`.
-- Phase graphs keep using LangGraph but with `PostgresSaver` and **no
-  `interrupt()`**: the gate node computes the `GateDecision` (auto/review/block)
-  and returns; waiting for a human moves up into the workflow (§7).
+- Phase graphs keep using LangGraph. Temporal activities invoke them without a
+  phase checkpointer and set gate record mode, so the gate node computes the
+  `GateDecision` (auto/review/block) and returns; waiting for a human moves up
+  into the workflow (§7). The local master uses its configured checkpointer.
 - Agents (`BaseAgent.run`) are unchanged. `ArtifactStore` and `Tracer` become
   interfaces with a Postgres implementation selected by config.
 
@@ -160,29 +161,29 @@ All tables are append-only except `runs.status`/`runs.phase`. Every row carries
 
 ```sql
 CREATE TABLE projects (
-  id            uuid PRIMARY KEY,
-  org_id        uuid NOT NULL,
+  id            text PRIMARY KEY,
+  org_id        text NOT NULL,
   name          text NOT NULL,
   repo_url      text,
   created_at    timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE runs (
-  id            uuid PRIMARY KEY,               -- == Temporal workflow_id
-  project_id    uuid NOT NULL REFERENCES projects(id),
+  id            text PRIMARY KEY,               -- == Temporal workflow_id
+  project_id    text NOT NULL REFERENCES projects(id),
   intent        text NOT NULL,
   context       jsonb NOT NULL,                 -- RunContext
   status        text NOT NULL,                  -- running|awaiting_approval|completed|blocked|failed
   phase         text NOT NULL,
   requested_by  text NOT NULL,                  -- developer identity
-  parent_run_id uuid REFERENCES runs(id),       -- for re-runs / forks
+  parent_run_id text REFERENCES runs(id),       -- for re-runs / forks
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE artifact_versions (
   id            bigserial PRIMARY KEY,
-  run_id        uuid NOT NULL REFERENCES runs(id),
+  run_id        text NOT NULL REFERENCES runs(id),
   key           text NOT NULL,                  -- e.g. requirements_spec, code_diff_WI-2
   version       int  NOT NULL,                  -- 1..n per (run_id,key)
   schema        text NOT NULL,                  -- Pydantic class name
@@ -200,7 +201,7 @@ CREATE INDEX ON artifact_versions USING gin (body jsonb_path_ops);
 
 CREATE TABLE agent_invocations (               -- replaces trace.jsonl
   id            bigserial PRIMARY KEY,
-  run_id        uuid NOT NULL REFERENCES runs(id),
+  run_id        text NOT NULL REFERENCES runs(id),
   phase         text NOT NULL,
   agent         text NOT NULL,
   work_item_id  text,
@@ -219,14 +220,14 @@ CREATE TABLE agent_invocations (               -- replaces trace.jsonl
 CREATE INDEX ON agent_invocations (run_id, started_at);
 
 CREATE TABLE scorecards (
-  id bigserial PRIMARY KEY, run_id uuid NOT NULL REFERENCES runs(id),
+  id bigserial PRIMARY KEY, run_id text NOT NULL REFERENCES runs(id),
   phase text NOT NULL, attempt int NOT NULL, agent text NOT NULL,
   scores jsonb NOT NULL, overall numeric(4,3) NOT NULL, passed boolean NOT NULL,
   feedback text[] NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE gate_decisions (
-  id bigserial PRIMARY KEY, run_id uuid NOT NULL REFERENCES runs(id),
+  id bigserial PRIMARY KEY, run_id text NOT NULL REFERENCES runs(id),
   phase text NOT NULL, attempt int NOT NULL,
   decision text NOT NULL,                       -- auto|review|block
   reason text NOT NULL,
@@ -235,14 +236,14 @@ CREATE TABLE gate_decisions (
 );
 
 CREATE TABLE change_requests (
-  id bigserial PRIMARY KEY, run_id uuid NOT NULL REFERENCES runs(id),
+  id bigserial PRIMARY KEY, run_id text NOT NULL REFERENCES runs(id),
   cr_id text NOT NULL, source_phase text NOT NULL, target_phase text NOT NULL,
   reason text NOT NULL, details text[] NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE run_events (                      -- human-readable log lines
-  id bigserial PRIMARY KEY, run_id uuid NOT NULL REFERENCES runs(id),
+  id bigserial PRIMARY KEY, run_id text NOT NULL REFERENCES runs(id),
   ts timestamptz NOT NULL DEFAULT now(), level text NOT NULL, message text NOT NULL
 );
 
@@ -322,7 +323,7 @@ timeout marks the run `blocked` with reason `approval_timeout`.
 
 | Activity | Task queue | Does |
 |---|---|---|
-| `run_phase(PhaseInput) → PhaseResult` | `aidlc-phases` (or `aidlc-build` for build) | Load run + latest artifacts from Postgres → build `AidlcState` → invoke phase LangGraph with `PostgresSaver` → persist new artifacts, invocations, scorecard, gate decision → return `PhaseResult(gate, scorecard_passed, triage_target)` |
+| `run_phase(PhaseInput) → PhaseResult` | `aidlc-phases` | Load run + latest artifacts from the selected repository → build `AidlcState` → invoke the phase LangGraph without a phase checkpointer → persist new artifacts, invocations, scorecard, gate decision → return `PhaseResult(gate, scorecard_passed, triage_target)` |
 | `run_work_item(WorkItemInput) → WorkItemResult` | `aidlc-build` | Coder → unit-test writer → reviewer for one `WI-n` (see §8) |
 | `run_static_and_tests(run_id, attempt)` | `aidlc-build` | Materialise sandbox from artifacts, run ruff/pytest, persist `StaticReport` |
 | `record_status(run_id, status, phase)` | `aidlc-phases` | Update `runs` row |
@@ -431,7 +432,7 @@ keeps today's in-process LangGraph path for unit tests.
 
 | Failure | Handling |
 |---|---|
-| Worker crashes mid-phase | Activity heartbeat times out → Temporal retries on another worker; LangGraph `PostgresSaver` lets the phase resume from its last node rather than restarting |
+| Worker crashes mid-phase | Activity heartbeat times out → Temporal retries on another worker; the current phase activity reloads persisted artifacts and reruns its phase graph |
 | LLM validation failure after retries | `AgentValidationError` (non-retryable) → phase evaluator fails → workflow retry logic (≤2) → blocked |
 | LLM endpoint down | Retryable activity error with exponential backoff (max 3); evaluator's deterministic-only fallback still applies for judges |
 | Duplicate activity execution | Artifact writes are version-append with hash de-dup; invocations table tolerates duplicates (they are facts about attempts) |
@@ -612,39 +613,32 @@ above (currently most default to `fast`); log `model` per invocation.
 
 Each slice is independently shippable and keeps the mock test suite green.
 
-| # | Slice | Scope | Verifies |
+| # | Slice | Status | Scope | Verifies |
 |---|---|---|---|
-| 1 | **Storage interfaces + Postgres backends** | `ArtifactStore`/`Tracer` become protocols; add `PostgresArtifactStore`, `PostgresTracer`, `runs`/`scorecards`/`gate_decisions`/`change_requests` writers; Alembic migrations; `AIDLC_DATABASE_URL` switch; keep file backend as default | existing 9 tests + new store tests against a Docker Postgres |
-| 2 | **LangGraph PostgresSaver** | replace `SqliteSaver` when `AIDLC_DATABASE_URL` set; thread id scheme `run:phase:attempt` | approval/resume test on Postgres |
-| 3 | **Temporal workflow + phase activities** | `aidlc/distributed/{workflow,activities,worker}.py`; `run_phase`; gate waiting via Signals; `aidlc worker`; CLI/API switch to Temporal client when `AIDLC_EXECUTION=temporal` | Temporal Python SDK time-skipping test env: full mock run, block, retry, backward hop, approve/reject |
-| 4 | **Build swarm** | `run_work_item` per WI, layered `gather`, sandbox materialisation from artifacts, budget guard | parallel WIs on two local workers |
-| 5 | **Project memory** | `project_memory` view + optional `project_memory` artifact into design/triage agents | design agents receive prior ADRs in prompts |
-| 6 | **Ops** | docker-compose (Temporal, Postgres, MinIO, Ollama), OTel, search attributes, `aidlc list` | end-to-end on two machines |
-| 7 | **Model routing** | `coder`/`reasoning` tiers, per-agent overrides, risk-based upgrade, `model` in invocations; LiteLLM proxy config with aliases + fallbacks; vLLM Helm values for the three starter deployments | mock tests + one real run against the gateway |
+| 1 | **Storage interfaces + Postgres backends** | Done | Protocols, file/Postgres backends, migrations, `AIDLC_DATABASE_URL` selection, file default | Existing mock tests plus Docker Postgres integration tests |
+| 2 | **LangGraph PostgresSaver** | Done | Postgres checkpointer when configured; SQLite default | Approval/resume test on Postgres |
+| 3 | **Temporal workflow + phase activities** | Done | Temporal workflow, activities, Signals, worker, CLI/API switch, status query | Time-skipping tests plus verified Compose e2e |
+| 4 | **Build swarm** | Planned | `run_work_item` per WI, layered fan-out, portable sandbox, budget guard | Parallel WIs on two workers |
+| 5 | **Project memory** | Planned | Project-memory view and design/triage inputs | Later design prompts receive prior ADRs |
+| 6 | **Ops** | Planned | OTel, search attributes, `aidlc list`, authentication, multi-machine operation | End-to-end on two machines |
+| 7 | **Model routing** | Planned | `coder`/`reasoning` tiers, overrides, proxy aliases/fallbacks, vLLM values | Mock tests plus gateway run |
 
 Estimated effort: slices 1–3 ≈ one session; 4–7 ≈ one more session, excluding
 external waits (Postgres/Temporal hosts, GPU machines, model downloads).
 
 ---
 
-## 17. Decisions to confirm
+## 17. Decisions (resolved — see BUILD_GUIDE)
 
-1. **Self-hosted Temporal vs Temporal Cloud** — design assumes self-hosted
-   (open source, MIT); Cloud is a drop-in if preferred.
-2. **Object storage** — inline JSONB only (simplest) vs MinIO/S3 for sandboxes
-   and large diffs from day one. Recommendation: inline first, blob URI column
-   reserved (already in schema).
-3. **Activity granularity** — phase-level (recommended for slice 3) vs
-   agent-level from the start.
-4. **Postgres for Temporal's own persistence** — share the same server (one
-   fewer component) or dedicated instance.
-5. **Auth for approvals** — API key per developer now, OIDC later?
-6. **pgvector** in scope for slice 5 or deferred.
-7. **Inference engine** — vLLM (recommended) vs TGI, or both behind the proxy.
-8. **Judge family** — accept Llama-licensed Llama-3.3-70B as the cross-family
-   judge, or stay Apache-only (Qwen + DeepSeek/Mistral) at some loss of diversity.
-9. **Starter GPU budget** — 7 GPUs (one replica per tier) vs a 2-GPU minimum
-   (Coder-32B AWQ + 7B) with the strong tier on a hosted open-model endpoint.
+1. Self-hosted Temporal via Docker Compose; Temporal Cloud is a later swap.
+2. Inline JSONB now; MinIO/S3 is for sandbox archives and large diffs in slice 4.
+3. Phase-level activities now; per-work-item activities are slice 4.
+4. One Postgres server with separate `aidlc` and `temporal` databases.
+5. Approvals carry `--by`; FastAPI API keys are slice 6 and OIDC is later.
+6. pgvector is deferred; slice 5 starts with relational project memory.
+7. vLLM is the default; TGI is an alternative behind the same LiteLLM proxy.
+8. Apache-2.0/MIT models are the default; Llama-licensed judges require legal sign-off.
+9. Start with two GPUs: coder 32B AWQ plus fast 7B; add one replica per tier later.
 
 ---
 

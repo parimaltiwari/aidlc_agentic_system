@@ -11,7 +11,7 @@ import uvicorn
 from rich.console import Console
 from rich.table import Table
 
-from aidlc.storage.factory import get_artifact_store
+from aidlc.storage.factory import get_artifact_store, get_run_repository
 from aidlc.orchestrators.master import resume_run, run_pipeline
 
 app = typer.Typer(help="AIDLC multi-agent development lifecycle")
@@ -95,6 +95,30 @@ def show(run_id: str):
     store = get_artifact_store(run_id)
     for artifact in store.list():
         console.print(artifact)
+
+
+@app.command()
+def status(
+    run_id: str,
+    execution: str | None = typer.Option(None, "--execution"),
+):
+    if execution:
+        os.environ["AIDLC_EXECUTION"] = execution
+    if os.getenv("AIDLC_EXECUTION") == "temporal":
+        from aidlc.distributed.client import status as temporal_status
+
+        current = asyncio.run(temporal_status(run_id))
+        console.print(
+            f"Run {current.run_id}: {current.status} "
+            f"(phase={current.phase}, awaiting_gate={current.awaiting_gate or '-'})"
+        )
+        return
+    current = get_run_repository().get_run(run_id)
+    if current is None:
+        raise typer.BadParameter(f"Unknown run: {run_id}")
+    console.print(
+        f"Run {run_id}: {current.get('status', 'unknown')} (phase={current.get('phase', '-')})"
+    )
 
 
 @app.command()

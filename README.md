@@ -1,104 +1,148 @@
 # AIDLC
 
-AIDLC is a deterministic, multi-agent AI-driven development lifecycle built on
-LangGraph. It moves an intent through Requirements → Design → Build → Test & Eval
-→ Deploy, preserving typed artifacts, evaluation scorecards, approval gates, and
-traceability. Mock mode performs a complete offline run; LiteLLM is pluggable.
+AIDLC is a typed, multi-agent development lifecycle that moves an intent through
+Requirements → Design → Build → Test/Eval → Deploy. LangGraph owns the phase
+subgraphs and agent contracts; optional Temporal owns durable cross-phase
+execution and approval waits; Postgres provides shared history when enabled.
+Mock/file/in-process execution remains the default and needs no API keys.
 
 ```text
-Ticket / PRD → Master FSM → [Requirements → Design → Build → Test/Eval → Deploy]
-                    ↘ typed artifact store, gates, evals, tracing, sandbox
+CLI / FastAPI
+     │
+     ▼
+Temporal workflow (optional) ── approval Signals ──► durable status
+     │ phase activities
+     ▼
+LangGraph phase graphs → specialist agents → MockLLM / LiteLLM gateway
+     │
+     └──────────────► Postgres history: runs, artifacts, traces,
+                      scorecards, gates, CRs, checkpoints
 ```
 
-## Quickstart
+## Quickstart: local mock mode
 
 ```bash
 uv sync
 uv run aidlc run "Add password reset via email to the user service" --auto-approve
 ```
 
-Useful environment variables: `AIDLC_LLM_PROVIDER=mock|litellm`,
-`AIDLC_MODEL`, `AIDLC_MODEL_STRONG`, `AIDLC_AUTO_APPROVE=1`, and
-`AIDLC_RUNS_DIR=./runs`. To use a real provider, set the appropriate LiteLLM
-credentials and run with `--provider litellm`.
-
-`AIDLC_MODEL` is used by fast agents and `AIDLC_MODEL_STRONG` by evaluators.
-`AIDLC_AUTO_APPROVE=1` bypasses review interruptions; without it, high-risk
-runs pause at each human gate. Checkpoints are stored in
-`$AIDLC_RUNS_DIR/checkpoints.sqlite`.
-
-## Approval
-
-Start a high-risk run without auto-approval:
+This uses the mock provider, file artifacts/traces under `./runs`, and a SQLite
+LangGraph checkpoint. A high-risk local run pauses at a LangGraph gate:
 
 ```bash
 uv run aidlc run "Add password reset" --risk high
-uv run aidlc approve RUN_ID --by parimal
-uv run aidlc approve RUN_ID --by parimal --reject
+uv run aidlc status RUN_ID
+uv run aidlc approve RUN_ID --by dev
 ```
 
-The API provides the same durable flow:
+## Quickstart: distributed Temporal mode
+
+Start the self-hosted local stack (Postgres creates both `aidlc` and `temporal`
+databases):
 
 ```bash
-curl -X POST http://127.0.0.1:8000/runs/RUN_ID/approve \
-  -H 'content-type: application/json' \
-  -d '{"approved": true, "by": "parimal"}'
+docker compose -f deploy/docker-compose.yml up -d
 ```
 
-## Master routing
+In another terminal, run the phase worker:
 
-After each phase gate, a block ends the run with `blocked`. A failed scorecard
-is retried up to two times, with evaluator feedback recorded in the run log.
-Test/evaluation triage can create a backward `ChangeRequest` to Design or
-Build, with at most two backward hops. Otherwise the next lifecycle phase is
-run; only an approved Deploy gate produces `completed`.
+```bash
+AIDLC_DATABASE_URL=postgresql://aidlc:aidlc@127.0.0.1:5432/aidlc \
+  uv run aidlc worker --address 127.0.0.1:7233 --namespace default
+```
+
+Start a mock Temporal run:
+
+```bash
+AIDLC_DATABASE_URL=postgresql://aidlc:aidlc@127.0.0.1:5432/aidlc \
+AIDLC_EXECUTION=temporal \
+AIDLC_TEMPORAL_ADDRESS=127.0.0.1:7233 \
+AIDLC_TEMPORAL_NAMESPACE=default \
+AIDLC_LLM_PROVIDER=mock \
+  uv run aidlc run "add health endpoint" --risk high --execution temporal
+```
+
+Query and approve each gate until the status is `completed`:
+
+```bash
+AIDLC_EXECUTION=temporal \
+AIDLC_TEMPORAL_ADDRESS=127.0.0.1:7233 \
+AIDLC_TEMPORAL_NAMESPACE=default \
+  uv run aidlc status RUN_ID --execution temporal
+
+AIDLC_EXECUTION=temporal \
+AIDLC_TEMPORAL_ADDRESS=127.0.0.1:7233 \
+AIDLC_TEMPORAL_NAMESPACE=default \
+  uv run aidlc approve RUN_ID --by dev --execution temporal
+```
+
+The Temporal UI is available at <http://127.0.0.1:8080>. Tear down the stack
+when finished:
+
+```bash
+docker compose -f deploy/docker-compose.yml down -v
+```
+
+## Configuration
+
+| Variable | Default / meaning |
+|---|---|
+| `AIDLC_DATABASE_URL` | Unset: file storage and SQLite checkpoints; set: Postgres shared history and checkpoints. |
+| `AIDLC_EXECUTION` | Unset: in-process; `temporal`: Temporal client path. |
+| `AIDLC_TEMPORAL_ADDRESS` | `localhost:7233`. |
+| `AIDLC_TEMPORAL_NAMESPACE` | `default`. |
+| `AIDLC_LLM_PROVIDER` | `mock` (offline default), `litellm`, or `ollama`. |
+| `AIDLC_MODEL` | Fast-agent model setting. |
+| `AIDLC_MODEL_STRONG` | Strong/evaluator model setting. |
+| `AIDLC_AUTO_APPROVE` | `1` bypasses review gates. |
+| `AIDLC_RUNS_DIR` | `./runs`; file artifacts, traces, sandboxes, and SQLite checkpoints. |
+
+## Model serving
+
+For local open-source inference, see
+[`docs/DESIGN.md`](docs/DESIGN.md) and the Ollama section in the design
+documentation. The implementation supports LiteLLM-hosted models and Ollama
+through `aidlc/core/llm.py`; the distributed build guide records the planned
+vLLM/TGI serving decisions and the measured CPU-only Ollama limitations.
+
+## Documentation
+
+Start with [`docs/README.md`](docs/README.md), then read:
+
+1. [`docs/DESIGN.md`](docs/DESIGN.md) — implemented local architecture.
+2. [`docs/DISTRIBUTED_DESIGN.md`](docs/DISTRIBUTED_DESIGN.md) — Temporal/Postgres
+   design and migration status.
+3. [`docs/BUILD_GUIDE.md`](docs/BUILD_GUIDE.md) — interfaces, verified stack
+   recipe, and future-slice acceptance criteria.
+4. [`docs/PLAN.md`](docs/PLAN.md) — original historical plan.
+
+## Verification
+
+```bash
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest -q
+```
+
+Postgres integration tests are enabled with:
+
+```bash
+AIDLC_TEST_DATABASE_URL=postgresql://aidlc:aidlc@127.0.0.1:55432/aidlc \
+  uv run pytest -q
+```
 
 ## Layout
 
-`core/` contains models, state, providers, gates, storage, and tracing;
-`agents/` contains phase specialists; `orchestrators/` contains phase graphs and
-the master FSM; `tools/` contains sandbox/git/static/test helpers; and
-`services/` contains the FastAPI API.
-
-## Run with a local open-source model (Ollama)
-
-Install Ollama and start its local server:
-
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
-ollama serve
+```text
+aidlc/
+├── aidlc/agents/          # phase-specialist agents and mock handlers
+├── aidlc/core/            # artifacts, state, LLMs, evaluators, gates
+├── aidlc/orchestrators/   # master and five LangGraph phase graphs
+├── aidlc/storage/         # file/Postgres protocols, backends, migrations
+├── aidlc/distributed/     # Temporal models, workflow, activities, client
+├── aidlc/tools/           # sandbox, static analysis, tests, git helpers
+├── aidlc/services/        # FastAPI service
+├── deploy/                # Compose stack, Postgres init SQL, env example
+├── docs/                  # architecture, design, build guide, plan
+└── tests/                 # mock, Postgres, and Temporal tests
 ```
-
-Pull the fast and strong models in another terminal:
-
-```bash
-ollama pull qwen2.5:3b
-ollama pull qwen2.5:7b
-```
-
-Run the lifecycle without API keys. The Ollama provider uses
-`qwen2.5:3b` for fast agents and `qwen2.5:7b` for evaluator agents by default:
-
-```bash
-AIDLC_AUTO_APPROVE=1 uv run aidlc run \
-  "Add password reset via email to the user service" \
-  --provider ollama --auto-approve --verbose
-```
-
-Override the models or server when needed:
-
-```bash
-AIDLC_MODEL=qwen2.5:3b \
-AIDLC_MODEL_STRONG=qwen2.5:7b \
-OLLAMA_BASE_URL=http://127.0.0.1:11434 \
-uv run aidlc run "Add password reset" --provider ollama --auto-approve
-```
-
-**Performance notes.** On this 8-CPU, no-GPU machine, observed per-call
-latencies were approximately 3–82 seconds for `qwen2.5:3b` (with one
-153-second outlier), and 3–78 seconds for `qwen2.5:7b` (with a measured
-153-second outlier). A `qwen2.5-coder:1.5b` run was started and measured
-approximately 1–158 seconds per call during Requirements/Design, but was
-stopped before completion. For production-scale runs, use a GPU or a hosted
-open-model endpoint such as vLLM, Together, or Groq via `--provider litellm`,
-for example `AIDLC_MODEL=groq/llama-3.1-70b-versatile`.
